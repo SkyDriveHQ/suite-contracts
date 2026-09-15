@@ -33,9 +33,13 @@ export type Unsubscribe = () => void;
  *
  * This is the discriminator suite Rule 10 leans on: a fabricated test record
  * and a real customer must never be confusable, even in a shared schema, a
- * screenshot, or a pasted bug report. DZGO's `RecordSource` is the original of
- * this list; the sibling-product values are added here as their boundaries are
- * built.
+ * screenshot, or a pasted bug report.
+ *
+ * **Products and provenance only — no vendor names.** DZGO's own `RecordSource`
+ * keeps `peekpro`, `smartwaiver` and `instructor-app`, because only DZGO has an
+ * opinion about a booking vendor's data shape. Carrying them here would break
+ * this file's own scope rule: a value exactly one product ever reads does not
+ * belong in the shared vocabulary.
  */
 export type SuiteSource =
   | 'mock'
@@ -43,9 +47,6 @@ export type SuiteSource =
   | 'skyperson'
   | 'skyvideo'
   | 'rigging'
-  | 'peekpro'
-  | 'smartwaiver'
-  | 'instructor-app'
   | 'manual'
   | 'import';
 

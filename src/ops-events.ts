@@ -33,6 +33,32 @@
  * Every product must run with no Ops in existence. The sink is fire-and-forget:
  * `emit` never rejects, never blocks a user action, and never surfaces an error
  * to a person. An Ops outage is invisible to a dropzone at work.
+ *
+ * ## How this lands in Ops' own table
+ *
+ * Ops already has `ops_events` (RLS-enabled, and as of 2026-09-14 holding zero
+ * rows — nothing has ever written to it). Its columns are wider than this
+ * contract on purpose: Ops uses the same table for its own internal entity log,
+ * where an `actor` and a human `summary` are exactly right.
+ *
+ * **A product push fills a deliberately narrow subset**:
+ *
+ * | `ops_events` column | From an `OpsEvent` |
+ * |---|---|
+ * | `id` | `eventId` |
+ * | `entity` | `product` |
+ * | `action` | `kind` |
+ * | `severity` | `outcome` (`ok` / `degraded` / `failed`) |
+ * | `occurred_at` | `at` |
+ * | `detail` (jsonb) | `measures`, plus `release` and `tenantKey` |
+ * | `summary` | **a fixed label derived from `kind`** — never free text |
+ * | `actor` | **a constant naming the product**, never a person |
+ *
+ * The last two rows are the whole privacy argument. `summary` and `actor` exist
+ * and are writable, so nothing stops a future emitter from putting a customer's
+ * name in one — nothing except this table and a reviewer. A product push that
+ * ever needs to say more says it with a new `OpsEventKind`, which is a
+ * reviewable change; a sentence in `summary` is not.
  */
 
 import type { ISODateTime, SuiteSource } from './common.js';
@@ -104,8 +130,11 @@ export interface OpsEventSink {
 /**
  * The no-Ops sink. Every product's default, and a fully correct way to run
  * forever — not a stub.
+ *
+ * Takes its product rather than defaulting to one: a constant that claimed to
+ * be DZGO would put the wrong product name on SkyPerson's own telemetry the
+ * moment anyone read it back.
  */
-export const nullOpsEventSink: OpsEventSink = {
-  product: 'dzgo',
-  emit: () => {},
-};
+export function nullOpsEventSink(product: SuiteSource): OpsEventSink {
+  return { product, emit: () => {} };
+}
