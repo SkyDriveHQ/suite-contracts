@@ -1,0 +1,23 @@
+{
+  "name": "@skydrive/suite-contracts",
+  "version": "0.1.0",
+  "description": "The cross-product boundary contracts for the SkyDrive suite, plus a mock generator for every seam. Types and pure functions only — no I/O, no vendor code, no product code, and no dependencies.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./mocks": { "types": "./dist/mocks/index.d.ts", "default": "./dist/mocks/index.js" }
+  },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "engines": { "node": ">=20.19" }
+}
