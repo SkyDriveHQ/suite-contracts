@@ -50,6 +50,7 @@ import { mockInstructorRoster, MockScenario } from '@skydrive/suite-contracts/mo
 | Rig service records | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020 |
 | Pilot reports | SkyPerson → DZGO | ⚠️ **PROPOSED.** DEC-079 |
 | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
+| Instructor work: day, manifest, jump totals, pay lines, availability, invoices | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Scoped to the signed-in instructor by construction |
 | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
 
 **A PROPOSED contract is safe to build a mock against and unsafe to build a real feed against.** That

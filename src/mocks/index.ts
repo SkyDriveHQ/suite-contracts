@@ -20,6 +20,7 @@ export { MockInstructorRoster, mockInstructorRoster, type MockRosterOptions } fr
 export { MockRigService, mockRigService, type MockRigFleetOptions } from './rig.js';
 export { MockPilotReports, mockPilotReports, type MockPilotDayOptions } from './pilot.js';
 export { MockPackingDay, mockPackingDay, type MockPackingDayOptions } from './packing.js';
+export { MockInstructorWork, mockInstructorWork, type MockInstructorWorkOptions } from './instructor-work.js';
 export {
   RecordingOpsEventSink,
   assertNonIdentifying,
