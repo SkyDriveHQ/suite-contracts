@@ -12,6 +12,7 @@
  * | Rig service records | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020. Needs Kyle's sign-off |
  * | Pilot reports | SkyPerson → DZGO | ⚠️ **PROPOSED.** DEC-079. Needs Kyle's sign-off |
  * | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
+ * | Instructor work (day, manifest, pay, availability, invoices) | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Mock-backed until DZGO serves it |
  * | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
  *
  * A PROPOSED contract is safe to build a mock against and unsafe to build a
@@ -34,4 +35,5 @@ export * from './instructor.js';
 export * from './rig.js';
 export * from './pilot.js';
 export * from './packing.js';
+export * from './instructor-work.js';
 export * from './ops-events.js';
