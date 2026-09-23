@@ -76,7 +76,7 @@ export class MockInstructorWork implements InstructorWorkAdapter {
   private readonly loads: FabricatedLoad[] = [];
   private readonly availability: AvailabilityEntry[] = [];
   private readonly invoices: InstructorInvoice[] = [];
-  private readonly checkIns = new Map<string, { at: string; until: string | null }>();
+  private readonly checkIns = new Map<string, { at: string; until: string | null; lighterDay: boolean }>();
   private readonly listeners = new Set<(e: InstructorWorkEvent) => void>();
   private nextInvoice = 1;
   private nextAvailability = 1;
@@ -99,6 +99,7 @@ export class MockInstructorWork implements InstructorWorkAdapter {
     this.checkIns.set(this.key(this.dropzones[0]!.dzId, scenario.activityDate), {
       at: `${scenario.activityDate}T08:12:00`,
       until: null,
+      lighterDay: false,
     });
   }
 
@@ -300,7 +301,7 @@ export class MockInstructorWork implements InstructorWorkAdapter {
   async checkIn(dzId: string, request: CheckInRequest): Promise<InstructorDaySummary> {
     this.requireDz(dzId);
     const date = this.scenario.activityDate;
-    this.checkIns.set(this.key(dzId, date), { at: nowIso(), until: request.availableUntil });
+    this.checkIns.set(this.key(dzId, date), { at: nowIso(), until: request.availableUntil, lighterDay: request.lighterDayRequested });
     return this.getDay(dzId, date);
   }
 
@@ -350,11 +351,20 @@ export class MockInstructorWork implements InstructorWorkAdapter {
     if (status === 'paid') {
       for (const id of inv.lineIds) {
         const line = this.lines.find((l) => l.lineId === id);
-        if (line && !line.paid) line.paid = { payoutId: this.scenario.id('payout', 900 + this.nextInvoice), paidAt: inv.respondedAt };
+        if (line && !line.paid) {
+          line.paid = { payoutId: this.scenario.id('payout', 900 + this.nextInvoice), paidAt: inv.respondedAt };
+          // A consumer listening per line must see the flip, not only the invoice's status change.
+          this.emit({ type: 'work.line_paid', at: inv.respondedAt, dzId: inv.dzId, line });
+        }
       }
     }
     this.emit({ type: 'invoice.status_changed', at: inv.respondedAt, dzId: inv.dzId, invoice: inv });
     return inv;
+  }
+
+  /** Test-panel read: whether today's check-in carried a lighter-day request (the boolean only, DEC-095). */
+  lighterDayRequested(dzId: string): boolean {
+    return this.checkIns.get(this.key(dzId, this.scenario.activityDate))?.lighterDay ?? false;
   }
 
   subscribe(listener: (event: InstructorWorkEvent) => void): Unsubscribe {

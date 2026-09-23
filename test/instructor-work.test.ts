@@ -151,6 +151,25 @@ describe('invoices', () => {
     await expect(work.submitInvoice(draft)).resolves.toMatchObject({ status: 'submitted' });
   });
 
+  it('announces each line as paid, not only the invoice', async () => {
+    const work = mockInstructorWork(scenario(86));
+    const [dz] = await work.listDropzones();
+    const from = '2026-09-08';
+    const lines = (await work.getEarnings(dz!.dzId, from, DAY)).filter((l) => l.amountMinor !== null && !l.paid);
+    const inv = await work.submitInvoice({ dzId: dz!.dzId, periodStart: from, periodEnd: DAY, lineIds: lines.map((l) => l.lineId), note: null });
+    const paidEvents: string[] = [];
+    work.subscribe((e) => { if (e.type === 'work.line_paid' && e.line) paidEvents.push(e.line.lineId); });
+    work.respond(inv.invoiceId, 'paid');
+    expect(paidEvents.sort()).toEqual([...inv.lineIds].sort());
+  });
+
+  it('records the lighter-day request as a boolean at check-in', async () => {
+    const work = mockInstructorWork(scenario(87));
+    const second = (await work.listDropzones())[1]!;
+    await work.checkIn(second.dzId, { availableUntil: null, lighterDayRequested: true });
+    expect(work.lighterDayRequested(second.dzId)).toBe(true);
+  });
+
   it('marks the lines paid when the dropzone pays the invoice', async () => {
     const work = mockInstructorWork(scenario(85));
     const [dz] = await work.listDropzones();
