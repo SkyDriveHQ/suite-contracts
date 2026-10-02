@@ -5,7 +5,8 @@
  * properties a consumer will actually rely on and that a plausible-looking
  * generator can silently get wrong: that a seed reproduces a day, that the
  * degradation ladder loses fidelity without losing jumps, that the queue
- * arithmetic adds up, and that an Ops event cannot carry a person.
+ * arithmetic adds up, that an Ops event cannot carry a person, and that a
+ * silent weather source never clears an alert.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -19,9 +20,17 @@ import {
   mockPackingDay,
   mockPilotReports,
   mockRigService,
+  mockWeather,
   SUITE_MOCK_SENTINEL,
 } from '../src/mocks/index.js';
-import { flightHours, latestReservePack, uncompliedBulletins } from '../src/index.js';
+import {
+  flightHours,
+  latestReservePack,
+  SiblingUnreachableError,
+  uncompliedBulletins,
+  weatherPanelHeader,
+  type WeatherAdapterEvent,
+} from '../src/index.js';
 
 const DAY = '2026-09-14';
 
@@ -275,5 +284,170 @@ describe('ops events', () => {
     for (const e of mockOpsEventStream(new MockScenario({ seed: 64, activityDate: DAY }), { count: 30 })) {
       expect(e.tenantKey).toMatch(/^mock-tenant-[0-9a-f]+$/);
     }
+  });
+});
+
+describe('weather', () => {
+  const weather = (seed: number) => mockWeather(new MockScenario({ seed, activityDate: DAY }));
+  const SEEDS = [71, 72, 73, 74, 75];
+
+  it('reproduces the same day from the same seed', () => {
+    const a = weather(71);
+    const b = weather(71);
+    for (const id of a.sourceIds()) expect(a.observations(id)).toEqual(b.observations(id));
+    expect(a.alertEvents().map((e) => [e.type, e.streamKey, e.sequence, e.text])).toEqual(
+      b.alertEvents().map((e) => [e.type, e.streamKey, e.sequence, e.text]),
+    );
+  });
+
+  it("keeps every time as UTC epoch milliseconds on the scenario's date", async () => {
+    const w = weather(72);
+    const dayStart = Date.UTC(2026, 8, 14);
+    for (const id of w.sourceIds()) {
+      for (const o of w.observations(id)) {
+        expect(typeof o.observedAt).toBe('number');
+        expect(o.observedAt).toBeGreaterThanOrEqual(dayStart);
+        expect(o.observedAt).toBeLessThan(dayStart + 86_400_000);
+      }
+    }
+    for (const e of w.alertEvents()) expect(typeof e.occurredAt).toBe('number');
+    for (const r of await w.getLatest(w.siteId)) expect(typeof r.healthSince).toBe('number');
+  });
+
+  it('records what a source did not measure as null, never as zero or clear', async () => {
+    const w = weather(73);
+    const latest = await w.getLatest(w.siteId);
+    const airport = latest.find((r) => r.descriptor.kind === 'noaa-metar')!;
+    const anemometer = latest.find((r) => r.descriptor.kind === 'davis-local')!;
+
+    // The anemometer has no sky sensor: ceiling, visibility and clouds are unknown, not "clear".
+    for (const o of w.observations(anemometer.descriptor.id)) {
+      expect(o.ceilingFtAgl).toBeNull();
+      expect(o.visibilitySm).toBeNull();
+      expect(o.clouds).toBeNull();
+    }
+    // The airport report never has a lull, and always reports the sky.
+    const reports = w.observations(airport.descriptor.id);
+    expect(reports.length).toBeGreaterThan(0);
+    expect(reports.every((o) => o.lullKt === null)).toBe(true);
+    expect(reports.every((o) => o.ceilingFtAgl === 'none' || typeof o.ceilingFtAgl === 'number')).toBe(true);
+    // And drops its gust group in some hours: null, not zero and not the wind.
+    const allReports = SEEDS.flatMap((seed) => {
+      const x = weather(seed);
+      return x.sourceIds().flatMap((id) => x.observations(id)).filter((o) => o.raw !== null);
+    });
+    expect(allReports.some((o) => o.gustKt === null)).toBe(true);
+    expect(allReports.some((o) => o.gustKt !== null)).toBe(true);
+  });
+
+  it('summarises bridge stations per minute: average wind, highest gust, lowest lull', async () => {
+    const w = weather(74);
+    const anemometer = (await w.getLatest(w.siteId)).find((r) => r.descriptor.kind === 'davis-local')!;
+    for (const o of w.observations(anemometer.descriptor.id)) {
+      expect(o.windowS).toBe(60);
+      expect(o.gustKt!).toBeGreaterThanOrEqual(o.windKt!);
+      expect(o.lullKt!).toBeLessThanOrEqual(o.windKt!);
+    }
+  });
+
+  it('never clears an alert because a source went silent', async () => {
+    for (const seed of SEEDS) {
+      const w = weather(seed);
+      const states = await w.getLimitStates(w.siteId);
+      // The runway station went silent while past a gust limit, and is still past.
+      expect(states.some((s) => s.sourceHealth === 'not_reporting' && s.state === 'past')).toBe(true);
+
+      const silence = w.alertEvents().find((e) => e.type === 'source.not_reporting')!;
+      expect(silence.observation).toBeNull();
+      expect(silence.rule).toBeNull();
+      // Nothing after the silence brought that source's limits back within.
+      expect(
+        w.alertEvents().some(
+          (e) => e.sourceId === silence.sourceId && e.type === 'limit.back_within' && e.occurredAt >= silence.occurredAt,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it('brings a silent source back only on fresh evidence, held for the minimum duration', async () => {
+    const w = weather(75);
+    const silence = w.alertEvents().find((e) => e.type === 'source.not_reporting')!;
+    const seen: WeatherAdapterEvent[] = [];
+    w.subscribe((e) => seen.push(e));
+    const calm = { windKt: 4, gustKt: 6, lullKt: 2, windowS: 60 };
+    const gustState = async () =>
+      (await w.getLimitStates(w.siteId)).find(
+        (s) => s.sourceId === silence.sourceId && s.rule.metric === 'gustKt' && s.rule.setName === 'Licensed',
+      )!.state;
+
+    w.deliverReading(silence.sourceId, calm);
+    expect(seen.some((e) => e.kind === 'alert' && e.alert.type === 'source.reporting')).toBe(true);
+    expect(await gustState()).toBe('past'); // reporting again is not "back within"; one calm minute is not enough
+
+    for (let i = 0; i < 6; i += 1) w.deliverReading(silence.sourceId, calm);
+    expect(await gustState()).toBe('within');
+    expect(seen.some((e) => e.kind === 'alert' && e.alert.type === 'limit.back_within')).toBe(true);
+  });
+
+  it('starts every limit at unknown, never at within, and does not announce a first "within"', async () => {
+    const w = weather(79);
+    const firsts = new Map<string, string>();
+    for (const e of w.alertEvents()) {
+      if (e.rule === null || firsts.has(e.streamKey)) continue;
+      firsts.set(e.streamKey, e.fromState);
+      if (e.toState === 'within') {
+        expect(e.notify).toBe(false);
+        expect(e.text).not.toMatch(/back within/);
+      }
+    }
+    expect([...firsts.values()].every((from) => from === 'unknown')).toBe(true);
+
+    // Every rule × source pair is listed, and a pair still without evidence says unknown.
+    const fresh = mockWeather(new MockScenario({ seed: 79, activityDate: DAY }), { minutes: 1 });
+    const states = await fresh.getLimitStates(fresh.siteId);
+    expect(states.length).toBe(9);
+    expect(states.some((s) => s.state === 'unknown' && s.since === null)).toBe(true);
+    expect(states.some((s) => s.state === 'within')).toBe(false);
+  });
+
+  it('numbers each stream up by exactly one', () => {
+    const w = weather(76);
+    const last = new Map<string, number>();
+    for (const e of w.alertEvents()) {
+      expect(e.sequence).toBe((last.get(e.streamKey) ?? 0) + 1);
+      last.set(e.streamKey, e.sequence);
+    }
+    expect(last.size).toBeGreaterThan(1);
+  });
+
+  it('tags every reading, state and event as mock, under its own source header', async () => {
+    const w = weather(77);
+    expect(w.descriptor.isMock).toBe(true);
+    expect(w.descriptor.speaks).toBe('weather');
+    expect(w.scenario.sentinel).toBe(SUITE_MOCK_SENTINEL);
+    for (const r of await w.getLatest(w.siteId)) {
+      expect(r.source).toBe('mock');
+      expect(r.header).toBe(weatherPanelHeader(r.descriptor.label));
+    }
+    for (const s of await w.getLimitStates(w.siteId)) expect(s.source).toBe('mock');
+    for (const e of w.alertEvents()) {
+      expect(e.source).toBe('mock');
+      expect(e.mock?.scenarioId).toBe(w.scenario.scenarioId);
+      expect(e.header).toBe(weatherPanelHeader(e.sourceLabel));
+    }
+    expect(weatherPanelHeader('Hangar anemometer')).toBe('Weather observations (Hangar anemometer)');
+  });
+
+  it('throws SiblingUnreachableError when SkyWeather is down, so the app shows "unavailable" (Rule 13)', async () => {
+    const w = weather(78);
+    const seen: string[] = [];
+    w.subscribe((e) => seen.push(e.kind));
+    w.setReachable(false);
+    await expect(w.getLatest(w.siteId)).rejects.toBeInstanceOf(SiblingUnreachableError);
+    await expect(w.getLimitStates(w.siteId)).rejects.toMatchObject({ product: 'weather' });
+    expect(seen).toEqual(['unreachable']);
+    w.setReachable(true);
+    expect((await w.getLatest(w.siteId)).length).toBe(3);
+    expect(seen).toEqual(['unreachable', 'reachable']);
   });
 });

@@ -28,3 +28,4 @@ export {
   mockOpsEventStream,
   type MockOpsStreamOptions,
 } from './ops-events.js';
+export { MockWeather, mockWeather, type MockWeatherOptions } from './weather.js';

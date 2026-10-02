@@ -52,6 +52,7 @@ import { mockInstructorRoster, MockScenario } from '@skydrive/suite-contracts/mo
 | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
 | Instructor work: day, manifest, jump totals, pay lines, availability, invoices | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Scoped to the signed-in instructor by construction |
 | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
+| Weather: readings, limit states, alert events (the webhook payload) | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Becomes agreed, and the package is retagged, in SkyWeather's integration-kit slice (W6) |
 
 **A PROPOSED contract is safe to build a mock against and unsafe to build a real feed against.** That
 is the point of drafting rather than waiting: both sides can develop while the shape is still being

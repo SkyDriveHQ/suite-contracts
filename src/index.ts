@@ -14,6 +14,7 @@
  * | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
  * | Instructor work (day, manifest, pay, availability, invoices) | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Mock-backed until DZGO serves it |
  * | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
+ * | Weather: readings, limit states, alert events | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Agreed and retagged in SkyWeather W6 |
  *
  * A PROPOSED contract is safe to build a mock against and unsafe to build a
  * real feed against. The mock is the point: it lets both sides develop while
@@ -37,3 +38,4 @@ export * from './pilot.js';
 export * from './packing.js';
 export * from './instructor-work.js';
 export * from './ops-events.js';
+export * from './weather.js';
