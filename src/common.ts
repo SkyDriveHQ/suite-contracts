@@ -47,6 +47,8 @@ export type SuiteSource =
   | 'skyperson'
   | 'skyvideo'
   | 'rigging'
+  /** SkyBook, the standalone booking engine (DEC-165). ⚠️ PROPOSED with `booking.ts`. */
+  | 'booking'
   | 'manual'
   | 'import';
 
