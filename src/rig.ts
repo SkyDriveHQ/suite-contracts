@@ -11,6 +11,15 @@
  * drafted from DZGO's native `RigRecord` (`dzgo/src/domain/rigs.ts`), and needs
  * Kyle's sign-off before either side builds against it.**
  *
+ * **Components (v0.3.0) have a different, firmer source.** `RigComponent` is
+ * not drafted from DZGO, which has no per-component record yet. It is drafted
+ * from the Rigging App's own `components` table (kind, manufacturer, model,
+ * serial number, date of manufacture) and from DZGO's gear design §3 ("a rig
+ * is an assembly", `DZGO/docs/for-humans/gear-design-v1.2.0.md`), which
+ * proposes that DZGO mirror that table "closely enough that a sync is a
+ * mapping rather than a translation". The contract as a whole is still
+ * PROPOSED; the component shape is the part with a shipped schema behind it.
+ *
  * The mock generator in `../mocks/rig.js` is real and usable now regardless —
  * that is the point of drafting rather than waiting. If the shape changes, the
  * mock changes with it and nothing else does.
@@ -121,6 +130,63 @@ export interface OutstandingBulletin {
 }
 
 /**
+ * The four parts of a rig that carry their own serial and date of manufacture.
+ *
+ * Lower-case to match the Rigging App's `components.kind` exactly, so the feed
+ * passes the value through rather than translating it. That table also allows
+ * `'other'` (pilot chutes, sliders, odd parts); those are deliberately not part
+ * of this boundary. The harness is part of the container, as it is on a data
+ * card: a container's serial is the harness/container serial.
+ */
+export type RigComponentKind = 'container' | 'main' | 'reserve' | 'aad';
+
+/**
+ * A date of manufacture **at the precision it is actually known**.
+ *
+ * Not an `ISODate`. Manufacturers stamp a DOM to the day, to the month, or (on
+ * a Vigil) to the week, and the Rigging App stores exactly what the label says
+ * rather than inventing a day it does not know (its migration 0032). The three
+ * forms, all lexically sortable:
+ *
+ * - `YYYY-MM-DD` — known to the day.
+ * - `YYYY-MM` — known to the month. The common case.
+ * - `YYYY-Www` — known to the ISO week, e.g. `2019-W23`. Vigil AADs.
+ *
+ * A consumer that needs a day (an AAD's end of life, say) must decide for
+ * itself how to round a month or a week, and must say so where it shows the
+ * result. Nothing in this package parses or rounds it.
+ */
+export type DateOfManufacture = string;
+
+/**
+ * One installed component of a rig: what it is, and the identity printed on it.
+ *
+ * This is **what the rig is made of**, not what was done to it. Service history
+ * stays where it already is: a reserve's repacks in `ReservePack`, an AAD's
+ * services and battery in `AadService`. A component carries the facts that do
+ * not change while it stays in this rig, which is what lets a dropzone answer
+ * "do we have any reserves from that serial range on the field?" when a
+ * bulletin arrives (gear design §2).
+ *
+ * `serialNumber` and `dateOfManufacture` are both **required keys that may be
+ * null**: the rigger may not have recorded them, and the Rigging App's columns
+ * are nullable. The feed must say "not recorded" with a null rather than by
+ * leaving the field out, so an unknown serial is visible as unknown.
+ */
+export interface RigComponent {
+  /** The Rigging App's own id for the component. Stable while it exists there. */
+  readonly componentId: string;
+  readonly kind: RigComponentKind;
+  /** As the rigger recorded it, e.g. "Sun Path" or "Airtec". */
+  readonly manufacturer: string | null;
+  /** As the rigger recorded it, e.g. "Javelin Odyssey" or "Cypres 2". */
+  readonly model: string | null;
+  /** As printed on the component. Shown verbatim, never normalised here. */
+  readonly serialNumber: string | null;
+  readonly dateOfManufacture: DateOfManufacture | null;
+}
+
+/**
  * What the Rigging App can add about one rig.
  *
  * Keyed to DZGO's rig by `scanCode` rather than by id: the two products have
@@ -134,6 +200,16 @@ export type RigServiceRecord = SuiteProvenance & {
   /** Manufacturer serial, where the rigger recorded one. */
   serial?: string | null;
   kind: RigKind;
+  /**
+   * What the rig is made of: its container, main, reserve and AAD as they are
+   * installed now, normally one of each kind. No order is promised; find a
+   * component by its `kind`, not its position. **Required, and an
+   * empty list rather than a null** when the rigger has recorded no
+   * components. A rig with no AAD simply has no `'aad'` entry. Retired
+   * components are not sent; a component that moved to another rig appears
+   * under that rig.
+   */
+  components: RigComponent[];
   /** Most recent first. A rig with no recorded repack has an empty list, not a null. */
   reservePacks: ReservePack[];
   aadServices: AadService[];

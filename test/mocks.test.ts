@@ -173,6 +173,52 @@ describe('rig service records', () => {
     expect(latestReservePack(updated)!.packedOn).toBe(DAY);
   });
 
+  it('sends every rig a components list, never a null, and says what each part is', async () => {
+    const rigs = mockRigService(new MockScenario({ seed: 35, activityDate: DAY }), { count: 40 });
+    const all = await rigs.getForRigs(rigs.scanCodes());
+    for (const r of all) {
+      expect(Array.isArray(r.components)).toBe(true);
+      if (r.components.length === 0) {
+        // Only a jumper's own rig goes unrecorded; the dropzone's fleet is always written down.
+        expect(r.kind).toBe('sport');
+        continue;
+      }
+      const kinds = r.components.map((c) => c.kind).sort();
+      expect(kinds).toEqual(r.aadServices.length > 0 ? ['aad', 'container', 'main', 'reserve'] : ['container', 'main', 'reserve']);
+      // Where the rig already says something, the component agrees with it.
+      expect(r.components.find((c) => c.kind === 'container')!.serialNumber).toBe(r.serial);
+      const aad = r.components.find((c) => c.kind === 'aad');
+      if (aad) {
+        expect(aad.model).toBe(r.aadServices[0]!.model);
+        expect(aad.serialNumber).toBe(r.aadServices[0]!.serialNumber);
+      }
+      for (const c of r.components) {
+        if (c.serialNumber !== null) expect(c.serialNumber).toMatch(/^MOCK-/);
+        if (c.dateOfManufacture !== null) expect(c.dateOfManufacture).toMatch(/^\d{4}-(\d{2}(-\d{2})?|W\d{2})$/);
+      }
+    }
+    // The fleet (not just sport rigs) carries components.
+    expect(all.some((r) => r.kind !== 'sport' && r.components.length > 0)).toBe(true);
+  });
+
+  it('dates components at the precision a label gives: day, month and week all occur, and some are unknown', async () => {
+    const rigs = mockRigService(new MockScenario({ seed: 36, activityDate: DAY }), { count: 60 });
+    const doms = (await rigs.getForRigs(rigs.scanCodes())).flatMap((r) => r.components.map((c) => c.dateOfManufacture));
+    expect(doms.some((d) => d === null)).toBe(true);
+    expect(doms.some((d) => d !== null && /^\d{4}-\d{2}-\d{2}$/.test(d))).toBe(true);
+    expect(doms.some((d) => d !== null && /^\d{4}-\d{2}$/.test(d))).toBe(true);
+    expect(doms.some((d) => d !== null && /^\d{4}-W\d{2}$/.test(d))).toBe(true);
+    // A part cannot postdate the day it is being reported on.
+    for (const d of doms) if (d !== null && !d.includes('W')) expect(d <= DAY).toBe(true);
+  });
+
+  it('reproduces the same components from the same seed', async () => {
+    const a = mockRigService(new MockScenario({ seed: 37, activityDate: DAY }), { count: 10 });
+    const b = mockRigService(new MockScenario({ seed: 37, activityDate: DAY }), { count: 10 });
+    const comps = async (s: typeof a) => (await s.getForRigs(s.scanCodes())).map((r) => r.components);
+    expect(await comps(a)).toEqual(await comps(b));
+  });
+
   it('marks fabricated rigger certificates so they cannot pass for real ones', async () => {
     const rigs = mockRigService(new MockScenario({ seed: 34, activityDate: DAY }), { count: 6 });
     for (const r of await rigs.getForRigs(rigs.scanCodes())) {
