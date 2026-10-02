@@ -205,7 +205,7 @@ export type RigServiceRecord = SuiteProvenance & {
    * identity when it did. Every part's own serial, the container's included,
    * also travels in `components`.
    *
-   * Decided 2026-10-02 (v0.3.1), under Kyle's standing "go with recommended",
+   * Decided 2026-10-02 (v0.4.0), under Kyle's standing "go with recommended",
    * and reversible. Doc only; the type is unchanged.
    */
   serial?: string | null;
