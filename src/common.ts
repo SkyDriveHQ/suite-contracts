@@ -47,6 +47,8 @@ export type SuiteSource =
   | 'skyperson'
   | 'skyvideo'
   | 'rigging'
+  /** SkyWeather, the standalone weather product (DEC-164). ⚠️ PROPOSED with `weather.ts`. */
+  | 'weather'
   /** SkyBook, the standalone booking engine (DEC-165). ⚠️ PROPOSED with `booking.ts`. */
   | 'booking'
   | 'manual'
