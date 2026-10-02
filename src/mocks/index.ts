@@ -22,6 +22,7 @@ export { MockPilotReports, mockPilotReports, type MockPilotDayOptions } from './
 export { MockPackingDay, mockPackingDay, type MockPackingDayOptions } from './packing.js';
 export { MockInstructorWork, mockInstructorWork, type MockInstructorWorkOptions } from './instructor-work.js';
 export { MockBookingEngine, mockBookingEngine, type MockBookingDayOptions } from './booking.js';
+export { MockWaiverEngine, mockWaiverEngine, type MockWaiverOptions } from './waiver.js';
 export {
   RecordingOpsEventSink,
   assertNonIdentifying,
