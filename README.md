@@ -47,7 +47,7 @@ import { mockInstructorRoster, MockScenario } from '@skydrive/suite-contracts/mo
 |---|---|---|
 | `JumpContext` | DZGO → SkyVideo | **Agreed** (DEC-048). Moved here from `@skyvideo/contracts`, unchanged |
 | Instructor roster | SkyPerson → DZGO | **Agreed and live.** DZGO's shipped code already depends on it |
-| Rig service records, including what each rig is made of (container, main, reserve, AAD; v0.3.0) | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020 |
+| Rig service records, including what each rig is made of (container, main, reserve, AAD; v0.3.0). The rig's `serial` is its container's (v0.3.1) | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020 |
 | Pilot reports | SkyPerson → DZGO | ⚠️ **PROPOSED.** DEC-079 |
 | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
 | Instructor work: day, manifest, jump totals, pay lines, availability, invoices | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Scoped to the signed-in instructor by construction |
