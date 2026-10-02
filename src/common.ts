@@ -51,6 +51,8 @@ export type SuiteSource =
   | 'weather'
   /** SkyBook, the standalone booking engine (DEC-165). ⚠️ PROPOSED with `booking.ts`. */
   | 'booking'
+  /** SkyWaiver, the standalone waiver engine (DEC-165, part 2). ⚠️ PROPOSED with `waiver.ts`. */
+  | 'waiver'
   | 'manual'
   | 'import';
 
