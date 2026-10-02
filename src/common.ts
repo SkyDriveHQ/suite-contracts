@@ -51,6 +51,8 @@ export type SuiteSource =
   | 'weather'
   /** SkyBook, the standalone booking engine (DEC-165). ⚠️ PROPOSED with `booking.ts`. */
   | 'booking'
+  /** MORAD, flight operations rebuilt from public tracking data (DEC-166). ⚠️ PROPOSED with `flightops.ts`. */
+  | 'flightops'
   | 'manual'
   | 'import';
 
