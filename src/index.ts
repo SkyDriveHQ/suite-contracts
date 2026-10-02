@@ -16,6 +16,7 @@
  * | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
  * | Weather: readings, limit states, alert events | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Agreed and retagged in SkyWeather W6 |
  * | Booking (SkyBook) | SkyBook → any host app, plus desk write-backs | ⚠️ **PROPOSED** (DEC-165, Kyle 2026-10-01). Sport-neutral; pack-defined participant fields |
+ * | Waiver (SkyWaiver) | SkyWaiver → any host app | ⚠️ **PROPOSED** (DEC-165 part 2, Kyle 2026-10-01). Sport-neutral; pack-defined category and fields; age of majority per site |
  *
  * A PROPOSED contract is safe to build a mock against and unsafe to build a
  * real feed against. The mock is the point: it lets both sides develop while
@@ -41,3 +42,4 @@ export * from './instructor-work.js';
 export * from './ops-events.js';
 export * from './weather.js';
 export * from './booking.js';
+export * from './waiver.js';
