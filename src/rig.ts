@@ -197,7 +197,17 @@ export interface RigComponent {
 export type RigServiceRecord = SuiteProvenance & {
   /** The code on the rig's label. The join key. */
   scanCode: string;
-  /** Manufacturer serial, where the rigger recorded one. */
+  /**
+   * The rig's serial: **the installed container's serial** (the
+   * harness/container serial on the rig's own label), or null when the rigger
+   * has not recorded one. Never the AAD's or any other part's: an AAD moves
+   * between rigs at service and swap, and a rig named by it would change
+   * identity when it did. Every part's own serial, the container's included,
+   * also travels in `components`.
+   *
+   * Decided 2026-10-02 (v0.4.0), under Kyle's standing "go with recommended",
+   * and reversible. Doc only; the type is unchanged.
+   */
   serial?: string | null;
   kind: RigKind;
   /**
