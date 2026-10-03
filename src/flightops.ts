@@ -1,5 +1,6 @@
 /**
- * MORAD — A dropzone's flight operations — every load, turn time and cost per load — rebuilt from public flight-tracking data.
+ * MORAD — an operator's flight operations (every sortie, turn time, flight hour and engine start), rebuilt
+ * from public flight-tracking data.
  *
  * ## ⚠️ PROPOSED. Not agreed.
  *
@@ -9,12 +10,12 @@
  * **Revised 2026-10-03 to match MORAD's results spec** (`SkyDriveHQ/morad` `docs/MORAD-RESULTS-SPEC.md`), which
  * settles seven places where the first draft disagreed with what the engine actually writes. In short: a host
  * receives one record per site per day carrying every aircraft's day (so "no data" and "withdrawn for
- * privacy" can be said); aircraft are keyed by ICAO hex, with the registration as a dated display field; what
- * the tracking data saw is kept apart from what was estimated, in separate groups; "turn" is two named
- * figures, not one ambiguous one; coverage is split into the archive's coverage and the take-offs and landings
- * seen; every record names the engine run that made it. All of these are Claude's defaults, not yet agreed.
- * The headline meaning of "turn" is an open question for Kyle (MORAD MRD-Q-001); the fields below carry both
- * measures, so the answer changes a label, not this file.
+ * privacy" can be said); aircraft are keyed by the engine's address string, with the registration as a dated
+ * display field; what the tracking data saw is kept apart from what was estimated, in separate groups, and
+ * every estimate can be "not available"; "turn" is two named figures, not one ambiguous one; coverage is split
+ * into the archive's coverage and the take-offs and landings seen; every record names the engine run that
+ * made it. The shapes are Claude's defaults, not yet agreed. Which turn figure a screen headlines (top to
+ * top, auto-chosen under Kyle's standing instruction, MORAD MRD-Q-001) is a label, not part of this file.
  *
  * ## Rule 13
  *
@@ -25,21 +26,23 @@
  * ## Vocabulary
  *
  * The contract uses MORAD's generic nouns so no sport's words reach it: a **sortie** is one climb from a
- * field and the return to it (a skydiving pack calls it a load); a **site** is the operator's field;
- * an **aircraft** is whatever flies the sorties; a **stop** is the time between two sorties of one aircraft
- * on one day; the **top** is the top of a sortie's climb. Every figure is rebuilt from public flight-tracking
- * data (adsb.lol, Open Database Licence) by MORAD's engine, never a manifest record.
+ * field and the return to it (each vertical pack has its own word for it); a **site** is the operator's
+ * field; an **aircraft** is whatever flies the sorties; a **stop** is the time between two sorties of one
+ * aircraft on one day; the **top** is the top of a sortie's climb. Every figure is rebuilt from public
+ * flight-tracking data (adsb.lol, Open Database Licence) by MORAD's engine, never an operator's own record.
  *
  * ## Privacy
  *
- * No record here ever names an aircraft whose owner asked the FAA to limit tracking. The one exception MORAD
- * allows (the site's own aircraft, to that site's members only) is not served until there is a way to prove
- * an aircraft is the site's (MORAD MRD-Q-003). No record carries a count of such aircraft per day.
+ * No record here ever names an aircraft whose owner asked the FAA to limit tracking, and none carries a
+ * per-day count of such aircraft or any per-day figure worked out before they were removed. The one
+ * exception MORAD allows (a site's own aircraft, to that site's members only) is served only after the
+ * aircraft passes MORAD's ownership check: the FAA registry's owner matches the operator's verified business,
+ * and a person approves it (MORAD MRD-Q-003).
  *
  * ## What goes here
  *
  * Only types that cross a product boundary (scope rule, `common.ts`). No I/O, no imports beyond
- * `./common.js`. Vertical-specific shapes (anything one sport needs, such as a "high" altitude share) stay
+ * `./common.js`. Vertical-specific shapes (anything one vertical needs, such as a "high" altitude share) stay
  * in MORAD's packs. No cost figure crosses this boundary.
  */
 
@@ -49,15 +52,20 @@ import type { ISODate, ISODateTime, SuiteProvenance } from './common.js';
 export type FlightopsSiteId = string;
 
 /**
- * The aircraft's 24-bit ICAO address, lower-case hex, e.g. `a1b2c3`: what the tracking data actually carries,
- * so it is the key. A registration can be unknown, and two unknown registrations would collide.
+ * The aircraft's address as the tracking data carries it, lower case: what the engine keys an aircraft by.
+ * - Six hex digits, e.g. `a1b2c3`: the aircraft's own ICAO 24-bit address, stable for that registration.
+ * - `~` and six hex digits, e.g. `~a1b2c3`: a non-ICAO address, assigned by a ground station or tracking
+ *   service rather than the aircraft. **Not a stable identity**: it can belong to different aircraft on
+ *   different days, so a host must not treat two days' `~` rows as one aircraft, and such a row never has a
+ *   registration.
+ * A registration can be unknown, and two unknown registrations would collide, so the address is the key.
  */
-export type FlightopsAircraftHex = string;
+export type FlightopsAircraftAddress = string;
 
 /** The connection a host app holds to one MORAD site. */
 export interface FlightopsConnection {
   readonly siteId: FlightopsSiteId;
-  /** Which vertical pack shapes this site's records, e.g. `skydiving`. */
+  /** Which vertical pack shapes this site's records. */
   readonly packId: string;
   readonly connectedAt: ISODateTime;
 }
@@ -88,13 +96,14 @@ export interface FlightopsRunInfo {
 }
 
 /**
- * Whether the archive had the data for a day. Only `complete` with no aircraft means "nothing flew that the
- * tracking data could see". Missing data is never reported as zero sorties.
- * - `complete`: every slice of tracking data the engine needed was read.
- * - `partial`: some slices were gaps in the archive; sorties may be missing.
+ * Whether the archive has the day's operating window (36 half-hour slices, 06:00 to 23:30 local). Only
+ * `complete` with no aircraft means "nothing flew that the tracking data could see". Missing data is never
+ * reported as zero sorties.
+ * - `complete`: every slice of the window is in the archive.
+ * - `partial`: some slices are gaps in the archive; sorties may be missing.
  * - `not_yet_published`: some slices are not in the archive yet (it publishes a day a few hours after it
  *   ends); the day will be rerun.
- * - `missing`: none could be read.
+ * - `missing`: none are.
  */
 export type FlightopsDayStatus = 'complete' | 'partial' | 'not_yet_published' | 'missing';
 
@@ -107,18 +116,22 @@ export interface FlightopsObservedDay {
   readonly landingsSeen: number;
 }
 
-/** What the engine estimated for one aircraft on one day, from climb and descent profiles and fitted models. */
+/**
+ * What the engine estimated for one aircraft on one day, from climb and descent profiles and fitted models.
+ * Every figure is `null` when the engine could not estimate it (for example a sortie with no descent profile
+ * has no estimated landing): never `0` in place of unknown.
+ */
 export interface FlightopsEstimatedDay {
-  /** Airborne hours: the sum of each sortie's estimated take-off to estimated landing. */
-  readonly flightHours: number;
+  /** Airborne hours: the sum of each sortie's estimated take-off to estimated landing; `null` if any is unknown. */
+  readonly flightHours: number | null;
   /** Sorties that followed an engine start: the first of the day, or the first after an engine-off stop. */
-  readonly engineStarts: number;
+  readonly engineStarts: number | null;
   /** Stops long enough that the engine was judged shut down. */
-  readonly engineOffStops: number;
+  readonly engineOffStops: number | null;
   /** Stops the fuel model labelled a fuel stop. Fuel taken during an engine-off stop is not counted. */
-  readonly fuelStops: number;
+  readonly fuelStops: number | null;
   /** Stops with the engine running in the dominant ("routine") regime: the stops both medians below use. */
-  readonly routineTurns: number;
+  readonly routineTurns: number | null;
   /** Median minutes from one sortie's top to the next one's, over the routine turns; `null` if none. */
   readonly medianTopToTopMinutes: number | null;
   /** Median estimated minutes on the ground, landing to next take-off, over the same turns; `null` if none. */
@@ -130,8 +143,8 @@ export interface FlightopsEstimatedDay {
  * tables (the mirror rule). A host shows these beside its own records, never in place of them.
  */
 export interface FlightopsAircraftDay {
-  readonly aircraftHex: FlightopsAircraftHex;
-  /** Registration as looked up, e.g. `N123AB`, for display; `null` when unknown. */
+  readonly aircraftAddress: FlightopsAircraftAddress;
+  /** Registration as looked up, e.g. `N123AB`, for display; `null` when unknown, and always for a `~` address. */
   readonly aircraftRegistration: string | null;
   /** The date the registration was looked up or last seen in the tracking data's own record. */
   readonly registrationAsOf: ISODate | null;
@@ -141,19 +154,24 @@ export interface FlightopsAircraftDay {
 
 /**
  * One site's day: the unit a host mirrors. A host replaces everything it holds for (siteId, date) with this
- * record, so an aircraft withdrawn for privacy, or a day that turns out to be missing, disappears too.
+ * record, so an aircraft withdrawn for privacy, or a day that turns out to be missing, disappears too. Every
+ * field is worked out after privacy-listed aircraft were removed, or does not depend on aircraft at all.
  */
 export interface FlightopsSiteDay {
   readonly siteId: FlightopsSiteId;
   /** Local calendar day at the site. */
   readonly date: ISODate;
   readonly status: FlightopsDayStatus;
-  /** Share of the slices of tracking data the engine needed that day that the archive had, 0..1. */
+  /**
+   * Share of the operating window's 36 slices that the archive holds, 0..1. A fixed denominator, counted from
+   * the archive's own index: it does not depend on what flew or on what the engine chose to read.
+   */
   readonly archiveCoverage: number;
   /**
-   * True when the day's few screening slices showed no climb-out, so the rest of the day was not read. A
-   * `complete` day with no aircraft and this flag means "no flying found in screening", which a host shows as
-   * such rather than as a flat zero.
+   * True when no aircraft that is not privacy-listed climbed out over the field in the day's few screening
+   * slices, so the rest of the window was not used. Worked out after privacy-listed aircraft were removed, so a day screened in only
+   * because of one reads exactly like a quiet day. A `complete` day with no aircraft and this flag means "no
+   * flying found in screening", which a host shows as such rather than as a flat zero.
    */
   readonly screenedOnly: boolean;
   /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`. */
