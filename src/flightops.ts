@@ -32,8 +32,9 @@
  *
  * ## Privacy
  *
- * No record here ever names an aircraft whose owner asked the FAA to limit tracking, except to members of
- * the site that showed the aircraft is its own. No record carries a count of such aircraft per day.
+ * No record here ever names an aircraft whose owner asked the FAA to limit tracking. The one exception MORAD
+ * allows (the site's own aircraft, to that site's members only) is not served until there is a way to prove
+ * an aircraft is the site's (MORAD MRD-Q-003). No record carries a count of such aircraft per day.
  *
  * ## What goes here
  *
@@ -149,6 +150,12 @@ export interface FlightopsSiteDay {
   readonly status: FlightopsDayStatus;
   /** Share of the slices of tracking data the engine needed that day that the archive had, 0..1. */
   readonly archiveCoverage: number;
+  /**
+   * True when the day's few screening slices showed no climb-out, so the rest of the day was not read. A
+   * `complete` day with no aircraft and this flag means "no flying found in screening", which a host shows as
+   * such rather than as a flat zero.
+   */
+  readonly screenedOnly: boolean;
   /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`. */
   readonly aircraft: readonly FlightopsAircraftDay[];
   readonly run: FlightopsRunInfo;
