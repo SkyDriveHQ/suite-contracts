@@ -98,6 +98,7 @@ export type FlightopsEventEnvelope<TType extends string, TData> = SuiteProvenanc
  * over a different window; this says which run a host is looking at.
  */
 export interface FlightopsRunInfo {
+  /** Random, never a counter. */
   readonly runId: string;
   /** Engine version and commit, e.g. `0.1.0+c44e5a5`, so a number can be reproduced. */
   readonly engineVersion: string;
