@@ -33,16 +33,22 @@
  *
  * ## Privacy
  *
- * An aircraft is **hidden** on a day if today's limited-tracking lists contain it or that day's tracking
- * records flag it (its owner asked the FAA to limit tracking); **visible** means not hidden. The check covers
- * every aircraft MORAD's engine uses, including any that merely tripped a day's screening.
+ * **Hidden is sticky and fail-closed.** MORAD keeps a private record of every aircraft address that has ever
+ * appeared on a limited-tracking list or been flagged in a tracking record (its owner asked the FAA to limit
+ * tracking). Such an aircraft is hidden on every day, past and future; nothing removes it. An aircraft is
+ * **visible** on a day only when MORAD positively cleared it: an ICAO address, not in that record, and that
+ * day's tracking record read and unflagged. Anything that could not be checked, including every non-ICAO
+ * address, is hidden. The check covers every aircraft MORAD's engine uses, including any that merely tripped a
+ * day's screening.
  *
  * The rule: **every record here is exactly what it would be if the hidden aircraft had never been tracked.**
  * No record names a hidden aircraft; no record carries a count of hidden aircraft in any form; a hidden
  * aircraft cannot cause a day to be read more fully, so it cannot change which visible aircraft are found or
- * what is estimated for them. The one exception MORAD allows (a site's own aircraft, to that site's members
- * only) is served only after the aircraft passes MORAD's ownership check: the FAA registry's owner matches
- * the operator's verified business, and a person approves it (MORAD MRD-Q-003).
+ * what is estimated for them; no record carries a time that a hidden aircraft could have moved.
+ *
+ * **Every record here comes from MORAD's shared results.** MORAD lets a site's members see the site's own
+ * privacy-listed aircraft after an approved ownership claim (MORAD MRD-Q-003), but those results stay inside
+ * MORAD and never cross this boundary, so a host's own access rules never decide who sees such an aircraft.
  *
  * ## What goes here
  *
@@ -57,13 +63,10 @@ import type { ISODate, ISODateTime, SuiteProvenance } from './common.js';
 export type FlightopsSiteId = string;
 
 /**
- * The aircraft's address as the tracking data carries it, lower case: what the engine keys an aircraft by.
- * - Six hex digits, e.g. `a1b2c3`: the aircraft's own ICAO 24-bit address, stable for that registration.
- * - `~` and six hex digits, e.g. `~a1b2c3`: a non-ICAO address, assigned by a ground station or tracking
- *   service rather than the aircraft. **Not a stable identity**: it can belong to different aircraft on
- *   different days, so a host must not treat two days' `~` rows as one aircraft, and such a row never has a
- *   registration.
- * A registration can be unknown, and two unknown registrations would collide, so the address is the key.
+ * The aircraft's own ICAO 24-bit address: six lower-case hex digits, e.g. `a1b2c3`. It is the key, because a
+ * registration can be unknown and two unknown registrations would collide. MORAD's engine also sees non-ICAO
+ * addresses (written `~` and six hex digits), but those can never be cleared for privacy, so they never appear
+ * in any record here.
  */
 export type FlightopsAircraftAddress = string;
 
@@ -77,10 +80,14 @@ export interface FlightopsConnection {
 
 /** Every event MORAD sends a host carries this envelope, so the host can mirror it idempotently. */
 export type FlightopsEventEnvelope<TType extends string, TData> = SuiteProvenance & {
-  /** Unique per event; a host that has seen it ignores it. */
+  /** Unique per event, random (never a per-site counter); a host that has seen it ignores it. */
   readonly eventId: string;
   readonly type: TType;
   readonly siteId: FlightopsSiteId;
+  /**
+   * MORAD's fixed daily release time for the night's results, the same for every site; never the moment one
+   * site's run finished, which could depend on a hidden aircraft.
+   */
   readonly occurredAt: ISODateTime;
   readonly data: TData;
 };
@@ -97,7 +104,8 @@ export interface FlightopsRunInfo {
   /** Local dates the run covered, inclusive. */
   readonly windowStart: ISODate;
   readonly windowEnd: ISODate;
-  readonly computedAt: ISODateTime;
+  /** The local date the run was for. Never a start, finish or duration, which could depend on a hidden aircraft. */
+  readonly computedOn: ISODate;
 }
 
 /**
@@ -109,8 +117,10 @@ export interface FlightopsRunInfo {
  * - `not_yet_published`: some slices are not in the archive yet (it publishes a day a few hours after it
  *   ends); the day will be rerun.
  * - `missing`: none are.
+ * - `unchecked`: the day's tracking records cannot be read, so no aircraft can be cleared for privacy; the day
+ *   carries no aircraft. Decided from the archive for every day, whatever flew, so it says nothing about what did.
  */
-export type FlightopsDayStatus = 'complete' | 'partial' | 'not_yet_published' | 'missing';
+export type FlightopsDayStatus = 'complete' | 'partial' | 'not_yet_published' | 'missing' | 'unchecked';
 
 /** What the tracking data saw for one aircraft on one day. No model or profile is involved. */
 export interface FlightopsObservedDay {
@@ -149,7 +159,7 @@ export interface FlightopsEstimatedDay {
  */
 export interface FlightopsAircraftDay {
   readonly aircraftAddress: FlightopsAircraftAddress;
-  /** Registration as looked up, e.g. `N123AB`, for display; `null` when unknown, and always for a `~` address. */
+  /** Registration as looked up, e.g. `N123AB`, for display; `null` when unknown. */
   readonly aircraftRegistration: string | null;
   /** The date the registration was looked up or last seen in the tracking data's own record. */
   readonly registrationAsOf: ISODate | null;
@@ -173,13 +183,13 @@ export interface FlightopsSiteDay {
    */
   readonly archiveCoverage: number;
   /**
-   * True when no visible aircraft climbed out over the field in the day's few screening slices, so the rest of
-   * the window was not read. A hidden aircraft never causes a full read, so a day it alone flew reads exactly
-   * like a quiet day. When true, `aircraft` is always empty (a record with both is invalid). A `complete` day
+   * True when no visible aircraft (positively cleared, as defined above) climbed out over the field in the
+   * day's few screening slices, so the rest of the window was not read. An aircraft that is hidden, or could not
+   * be cleared, never causes a full read, so a day only such aircraft flew reads exactly like a quiet day. When true, `aircraft` is always empty (a record with both is invalid). A `complete` day
    * with this flag means "no flying found in screening", which a host shows as such rather than as a flat zero.
    */
   readonly screenedOnly: boolean;
-  /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`. */
+  /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`; always empty for `unchecked`. */
   readonly aircraft: readonly FlightopsAircraftDay[];
   readonly run: FlightopsRunInfo;
 }
