@@ -33,11 +33,16 @@
  *
  * ## Privacy
  *
- * No record here ever names an aircraft whose owner asked the FAA to limit tracking, and none carries a
- * per-day count of such aircraft or any per-day figure worked out before they were removed. The one
- * exception MORAD allows (a site's own aircraft, to that site's members only) is served only after the
- * aircraft passes MORAD's ownership check: the FAA registry's owner matches the operator's verified business,
- * and a person approves it (MORAD MRD-Q-003).
+ * An aircraft is **hidden** on a day if today's limited-tracking lists contain it or that day's tracking
+ * records flag it (its owner asked the FAA to limit tracking); **visible** means not hidden. The check covers
+ * every aircraft MORAD's engine uses, including any that merely tripped a day's screening.
+ *
+ * The rule: **every record here is exactly what it would be if the hidden aircraft had never been tracked.**
+ * No record names a hidden aircraft; no record carries a count of hidden aircraft in any form; a hidden
+ * aircraft cannot cause a day to be read more fully, so it cannot change which visible aircraft are found or
+ * what is estimated for them. The one exception MORAD allows (a site's own aircraft, to that site's members
+ * only) is served only after the aircraft passes MORAD's ownership check: the FAA registry's owner matches
+ * the operator's verified business, and a person approves it (MORAD MRD-Q-003).
  *
  * ## What goes here
  *
@@ -155,7 +160,7 @@ export interface FlightopsAircraftDay {
 /**
  * One site's day: the unit a host mirrors. A host replaces everything it holds for (siteId, date) with this
  * record, so an aircraft withdrawn for privacy, or a day that turns out to be missing, disappears too. Every
- * field is worked out after privacy-listed aircraft were removed, or does not depend on aircraft at all.
+ * field is worked out from visible aircraft only, or does not depend on aircraft at all.
  */
 export interface FlightopsSiteDay {
   readonly siteId: FlightopsSiteId;
@@ -168,10 +173,10 @@ export interface FlightopsSiteDay {
    */
   readonly archiveCoverage: number;
   /**
-   * True when no aircraft that is not privacy-listed climbed out over the field in the day's few screening
-   * slices, so the rest of the window was not used. Worked out after privacy-listed aircraft were removed, so a day screened in only
-   * because of one reads exactly like a quiet day. A `complete` day with no aircraft and this flag means "no
-   * flying found in screening", which a host shows as such rather than as a flat zero.
+   * True when no visible aircraft climbed out over the field in the day's few screening slices, so the rest of
+   * the window was not read. A hidden aircraft never causes a full read, so a day it alone flew reads exactly
+   * like a quiet day. When true, `aircraft` is always empty (a record with both is invalid). A `complete` day
+   * with this flag means "no flying found in screening", which a host shows as such rather than as a flat zero.
    */
   readonly screenedOnly: boolean;
   /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`. */
