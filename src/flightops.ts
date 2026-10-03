@@ -36,10 +36,12 @@
  * **Hidden is sticky and fail-closed.** MORAD keeps a private record of every aircraft address that has ever
  * appeared on a limited-tracking list or been flagged in a tracking record (its owner asked the FAA to limit
  * tracking). Such an aircraft is hidden on every day, past and future; nothing removes it. An aircraft is
- * **visible** on a day only when MORAD positively cleared it: an ICAO address, not in that record, and that
- * day's tracking record read and unflagged. Anything that could not be checked, including every non-ICAO
- * address, is hidden. The check covers every aircraft MORAD's engine uses, including any that merely tripped a
- * day's screening.
+ * **visible** on a day only when MORAD positively cleared it: an ICAO address, not in that record, and its
+ * tracking record read and unflagged on every UTC day the site's operating window spans (two at US fields;
+ * a UTC day with no record for it at all counts only if none of its positions from that day is used).
+ * Anything that could not be checked, including every non-ICAO address, is hidden. One aircraft whose record
+ * could not be read is hidden alone; it never changes what is read for, or served about, any other aircraft.
+ * The check covers every aircraft MORAD's engine uses, including any that merely tripped a day's screening.
  *
  * The rule: **every record here is exactly what it would be if the hidden aircraft had never been tracked.**
  * No record names a hidden aircraft; no record carries a count of hidden aircraft in any form; a hidden
@@ -118,8 +120,14 @@ export interface FlightopsRunInfo {
  * - `not_yet_published`: some slices are not in the archive yet (it publishes a day a few hours after it
  *   ends); the day will be rerun.
  * - `missing`: none are.
- * - `unchecked`: the day's tracking records cannot be read, so no aircraft can be cleared for privacy; the day
- *   carries no aircraft. Decided from the archive for every day, whatever flew, so it says nothing about what did.
+ * - `unchecked`: the tracking records of a UTC day the operating window spans cannot be read, so no aircraft
+ *   can be cleared for privacy; the day carries no aircraft and `screenedOnly` is always true. Decided the same
+ *   way whatever flew (from the day's complete map of tracking records, never from which aircraft were looked
+ *   up), so it says nothing about what did. One aircraft whose own record cannot be read never makes a day
+ *   `unchecked`.
+ *
+ * When more than one applies, the first of `not_yet_published`, `missing`, `unchecked`, `partial`, `complete`
+ * wins. A day carries aircraft only if every UTC day its window spans could be read.
  */
 export type FlightopsDayStatus = 'complete' | 'partial' | 'not_yet_published' | 'missing' | 'unchecked';
 
@@ -186,8 +194,10 @@ export interface FlightopsSiteDay {
   /**
    * True when no visible aircraft (positively cleared, as defined above) climbed out over the field in the
    * day's few screening slices, so the rest of the window was not read. An aircraft that is hidden, or could not
-   * be cleared, never causes a full read, so a day only such aircraft flew reads exactly like a quiet day. When true, `aircraft` is always empty (a record with both is invalid). A `complete` day
-   * with this flag means "no flying found in screening", which a host shows as such rather than as a flat zero.
+   * be cleared, never causes a full read, so a day only such aircraft flew reads exactly like a quiet day.
+   * When true, `aircraft` is always empty (a record with both is invalid). Always true when `status` is
+   * `unchecked`. A `complete` day with this flag means "no flying found in screening", which a host shows as
+   * such rather than as a flat zero.
    */
   readonly screenedOnly: boolean;
   /** One entry per aircraft that flew at least one sortie; empty is meaningful only when `status` is `complete`; always empty for `unchecked`. */
