@@ -39,7 +39,12 @@
  *
  * ## Money
  *
- * Integer minor units with an ISO 4217 currency, as everywhere in the suite.
+ * Integers with an ISO 4217 currency, as everywhere in the suite: **the typed
+ * amount times 100 in every currency**, yen included (12,000 yen is `1200000`,
+ * 1.5 KWD is `150`). Not each currency's own smallest unit: the two agree for
+ * dollars and euros and differ 100-fold for yen, which is how a copied booking
+ * goes wrong. This is the suite's internal unit only; a payment processor
+ * converts at its own boundary (Ops `e1ba4a23`).
  * Card numbers never cross this boundary: a card on file is a brand and last
  * four only.
  */
