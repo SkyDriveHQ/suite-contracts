@@ -38,7 +38,7 @@
  * tracking). Such an aircraft is hidden on every day, past and future; nothing removes it. An aircraft is
  * **visible** on a day only when MORAD positively cleared it: an ICAO address, not in that record, and its
  * tracking record read and unflagged on every UTC day the site's operating window spans (two at US fields;
- * a UTC day with no record for it at all counts only if none of its positions from that day is used).
+ * a UTC day with no record for it at all counts as clear, and none of its positions from that day is used).
  * Anything that could not be checked, including every non-ICAO address, is hidden. One aircraft whose record
  * could not be read is hidden alone; it never changes what is read for, or served about, any other aircraft.
  * The check covers every aircraft MORAD's engine uses, including any that merely tripped a day's screening.
