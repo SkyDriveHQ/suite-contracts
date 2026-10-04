@@ -16,6 +16,10 @@
  *   from their own seeded stream, so adding them changed no participant's name or date of birth for a
  *   seed. A checked waiver's `updatedAt` is the check's time, as recording a check is a change.
  *
+ * `signNow()` brings in a newly signed waiver the way Kyle's rule says it arrives: awaiting confirmation,
+ * with no ID check. `confirmNow()` is the desk checking ID in person: it records a fresh check, makes the
+ * waiver valid and announces `waiver.confirmed`.
+ *
  * `goUnreachable()` makes every call throw `SiblingUnreachableError('waiver')`, so a host's Rule 13
  * fallback can be tested against the same mock.
  */
@@ -32,7 +36,7 @@ import {
   type WaiverWebhookEvent,
 } from '../index.js';
 import { MockScenario } from './scenario.js';
-import { mockName } from './rng.js';
+import { mockName, type Rng } from './rng.js';
 
 export interface MockWaiverOptions {
   /** Ordinary valid waivers per site, on top of the fixed edge cases. Default 6. */
@@ -50,6 +54,8 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
   private listeners = new Set<(event: WaiverWebhookEvent) => void>();
   private unreachable = false;
   private eventSeq = 0;
+  /** Its own stream, so the ID checks do not shift any name or date drawn from 'waivers'. */
+  private checks: Rng;
 
   constructor(
     readonly scenario: MockScenario = new MockScenario(),
@@ -61,18 +67,9 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
       { siteId: s.id('waiver-site', 2), operatorId: s.id('operator', 1), name: 'Mock Balloon Operator (ballooning pack)', timezone: 'America/Denver', ageOfMajority: 19, packId: 'ballooning', packVersion: '0.0.0-mock' },
     ];
     const rng = s.streamFor('waivers');
-    // A separate stream, so the ID checks do not shift any name or date drawn from 'waivers'.
-    const checks = s.streamFor('waiver-id-checks');
+    this.checks = s.streamFor('waiver-id-checks');
     const at = (h: number): ISODateTime => `${s.activityDate}T${String(h).padStart(2, '0')}:00:00Z`;
-    /** Staff checked ID in person a few minutes after signing. */
-    const idCheckAfter = (signedAt: ISODateTime): WaiverIdCheck => {
-      const staff = mockName(checks);
-      return {
-        checkedBy: `${staff.first} ${staff.last}`,
-        checkedAt: new Date(Date.parse(signedAt) + checks.int(2, 45) * 60_000).toISOString().replace('.000Z', 'Z'),
-        method: 'in-person',
-      };
-    };
+    const idCheckAfter = (signedAt: ISODateTime) => this.idCheckAfter(signedAt);
     let n = 0;
     const base = (siteIdx: number, over: Partial<WaiverSummary>): WaiverSummary => {
       n += 1;
@@ -132,6 +129,16 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
     this.waivers.push(corrected);
   }
 
+  /** Staff checked ID in person a few minutes after signing. */
+  private idCheckAfter(signedAt: ISODateTime): WaiverIdCheck {
+    const staff = mockName(this.checks);
+    return {
+      checkedBy: `${staff.first} ${staff.last}`,
+      checkedAt: new Date(Date.parse(signedAt) + this.checks.int(2, 45) * 60_000).toISOString().replace('.000Z', 'Z'),
+      method: 'in-person',
+    };
+  }
+
   /** Every later call throws `SiblingUnreachableError('waiver')`, until `comeBack()`. */
   goUnreachable(): void {
     this.unreachable = true;
@@ -172,14 +179,47 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
     return this.waivers.filter((w) => w.siteId === siteId && Date.parse(w.updatedAt) > Date.parse(since));
   }
 
-  /** Test helper: a waiver is signed now, and every subscriber hears `waiver.signed`. */
+  /**
+   * Test helper: a waiver is signed now, and every subscriber hears `waiver.signed`. Under Kyle's rule it
+   * arrives awaiting confirmation with `idCheck: null`, never valid: nobody has checked ID yet.
+   * (Before v0.5.0 this returned a `valid` waiver.)
+   */
   signNow(siteIdx = 0): WaiverSummary {
     const template = this.waivers.find((w) => w.siteId === this.sites[siteIdx]!.siteId)!;
-    const w: WaiverSummary = { ...template, waiverId: this.scenario.id('waiver', 1000 + this.eventSeq), version: 1, status: 'valid', supersededBy: null };
+    const w: WaiverSummary = {
+      ...template,
+      waiverId: this.scenario.id('waiver', 1000 + this.eventSeq),
+      version: 1,
+      status: 'awaiting-confirmation',
+      idCheck: null,
+      supersededBy: null,
+      updatedAt: template.signedAt,
+    };
     this.waivers.push(w);
-    this.eventSeq += 1;
-    for (const l of this.listeners) l({ eventId: this.scenario.id('waiver-event', this.eventSeq), siteId: w.siteId, at: w.signedAt, type: 'waiver.signed', waiver: w });
+    this.emit({ siteId: w.siteId, at: w.signedAt, type: 'waiver.signed', waiver: w });
     return w;
+  }
+
+  /**
+   * Test helper: staff check the person's ID in person and it matches. The waiver gets a fresh `idCheck`,
+   * becomes `valid` with a higher version, and every subscriber hears `waiver.confirmed`. Only a waiver
+   * awaiting confirmation can be confirmed; anything else throws, as it is a mistake in the test.
+   */
+  confirmNow(waiverId: string): WaiverSummary {
+    const i = this.waivers.findIndex((w) => w.waiverId === waiverId);
+    const before = this.waivers[i];
+    if (!before || before.status !== 'awaiting-confirmation') throw new Error(`mock waiver ${waiverId} is not awaiting confirmation`);
+    const idCheck = this.idCheckAfter(before.signedAt);
+    const w: WaiverSummary = { ...before, status: 'valid', idCheck, version: before.version + 1, updatedAt: idCheck.checkedAt };
+    this.waivers[i] = w;
+    this.emit({ siteId: w.siteId, at: idCheck.checkedAt, type: 'waiver.confirmed', waiver: w });
+    return w;
+  }
+
+  private emit(event: Omit<Extract<WaiverWebhookEvent, { type: 'waiver.signed' | 'waiver.confirmed' }>, 'eventId'>): void {
+    this.eventSeq += 1;
+    const full = { ...event, eventId: this.scenario.id('waiver-event', this.eventSeq) } as WaiverWebhookEvent;
+    for (const l of this.listeners) l(full);
   }
 
   subscribe(listener: (event: WaiverWebhookEvent) => void): Unsubscribe {

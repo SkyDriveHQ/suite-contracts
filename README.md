@@ -53,7 +53,7 @@ import { mockInstructorRoster, MockScenario } from '@skydrive/suite-contracts/mo
 | Instructor work: day, manifest, jump totals, pay lines, availability, invoices | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Scoped to the signed-in instructor by construction |
 | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
 | Weather: readings, limit states, alert events (the webhook payload) | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Becomes agreed, and the package is retagged, in SkyWeather's integration-kit slice (W6) |
-| Waiver (SkyWaiver): waiver summaries, status, signature evidence, signed webhook events (v0.4.0). Who checked the person's ID in person against the waiver, and when; every waiver waits for that check (v0.5.0) | SkyWaiver → any host app | ⚠️ **PROPOSED** (DEC-165 part 2, Kyle 2026-10-01). Sport-neutral; pack-defined category and fields; age of majority per site |
+| Waiver (SkyWaiver): waiver summaries, status, signature evidence, signed webhook events (v0.4.0). Who checked the person's ID in person against the waiver, and when; every waiver waits for that check, and `usableWaiversCheckedInPerson` keeps only checked ones (v0.5.0) | SkyWaiver → any host app | ⚠️ **PROPOSED** (DEC-165 part 2, Kyle 2026-10-01). Sport-neutral; pack-defined category and fields; age of majority per site |
 
 **A PROPOSED contract is safe to build a mock against and unsafe to build a real feed against.** That
 is the point of drafting rather than waiting: both sides can develop while the shape is still being

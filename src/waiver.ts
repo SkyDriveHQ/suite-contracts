@@ -34,7 +34,7 @@
  * paper, import or vendor), is `valid` until staff have checked the person's ID in person and recorded
  * that it matches. `idCheck` on the summary says who did that and when. A host that enforces the rule
  * fails closed: a waiver whose `idCheck` is `null` or absent is not confirmed against ID, whatever its
- * `status` says.
+ * `status` says. `usableWaiversCheckedInPerson` does exactly that.
  *
  * ## Rule 13 and the mirror rule
  *
@@ -214,10 +214,20 @@ export interface WaiverEngineAdapter {
 /**
  * The waivers SkyWaiver reports as current for a person: valid, and not superseded.
  *
- * This looks at `status` only, as it did before v0.5.0; it does not look at `idCheck`. A host that
- * enforces Kyle's in-person ID rule must also require `idCheck` to be an object, and treat `null` or a
- * missing field as not checked.
+ * This looks at `status` only, as it did before v0.5.0; it does not look at `idCheck`, so it still
+ * returns a `valid` waiver written before Kyle's in-person ID rule. **A host that follows the rule uses
+ * `usableWaiversCheckedInPerson` instead.**
  */
 export function usableWaivers(waivers: readonly WaiverSummary[]): WaiverSummary[] {
   return waivers.filter((w) => w.status === 'valid');
+}
+
+/**
+ * The waivers a host following Kyle's rule may treat as current for a person (v0.5.0): valid, not
+ * superseded, **and** checked against the person's ID in person, so `idCheck` is an object. A `null`
+ * `idCheck` (not yet checked) or a missing one (a producer from before the field) counts as not
+ * checked, and the waiver is left out: this fails closed.
+ */
+export function usableWaiversCheckedInPerson(waivers: readonly WaiverSummary[]): WaiverSummary[] {
+  return usableWaivers(waivers).filter((w) => w.idCheck != null && w.idCheck.method === 'in-person');
 }
