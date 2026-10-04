@@ -10,6 +10,11 @@
  * - **One lapsed, one awaiting desk confirmation, and one superseded by a correction**, so a host
  *   cannot treat "has a waiver" as "has a usable waiver".
  * - **A skydiving waiver with no licence field**, because a tandem is not asked for one: absent, never null.
+ * - **An in-person ID check on every waiver that has passed the desk** (valid, lapsed, superseded: who
+ *   checked and when, never before it was signed) and `null` on the one awaiting confirmation, because
+ *   Kyle's rule holds every waiver until staff check ID in person. The checkers' names and times come
+ *   from their own seeded stream, so adding them changed no participant's name or date of birth for a
+ *   seed. A checked waiver's `updatedAt` is the check's time, as recording a check is a change.
  *
  * `goUnreachable()` makes every call throw `SiblingUnreachableError('waiver')`, so a host's Rule 13
  * fallback can be tested against the same mock.
@@ -19,6 +24,7 @@ import {
   SiblingUnreachableError,
   type ISODateTime,
   type Unsubscribe,
+  type WaiverIdCheck,
   type WaiverEngineAdapter,
   type WaiverLookup,
   type WaiverSiteRef,
@@ -55,12 +61,23 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
       { siteId: s.id('waiver-site', 2), operatorId: s.id('operator', 1), name: 'Mock Balloon Operator (ballooning pack)', timezone: 'America/Denver', ageOfMajority: 19, packId: 'ballooning', packVersion: '0.0.0-mock' },
     ];
     const rng = s.streamFor('waivers');
+    // A separate stream, so the ID checks do not shift any name or date drawn from 'waivers'.
+    const checks = s.streamFor('waiver-id-checks');
     const at = (h: number): ISODateTime => `${s.activityDate}T${String(h).padStart(2, '0')}:00:00Z`;
+    /** Staff checked ID in person a few minutes after signing. */
+    const idCheckAfter = (signedAt: ISODateTime): WaiverIdCheck => {
+      const staff = mockName(checks);
+      return {
+        checkedBy: `${staff.first} ${staff.last}`,
+        checkedAt: new Date(Date.parse(signedAt) + checks.int(2, 45) * 60_000).toISOString().replace('.000Z', 'Z'),
+        method: 'in-person',
+      };
+    };
     let n = 0;
     const base = (siteIdx: number, over: Partial<WaiverSummary>): WaiverSummary => {
       n += 1;
       const site = this.sites[siteIdx]!;
-      return {
+      const w = {
         ...s.provenance(),
         waiverId: s.id('waiver', n),
         siteId: site.siteId,
@@ -83,6 +100,11 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
         updatedAt: at(8),
         ...over,
       } as WaiverSummary;
+      // Decided from the finished record, so an overridden status or signing time is respected.
+      if (!('idCheck' in over)) w.idCheck = w.status === 'awaiting-confirmation' ? null : idCheckAfter(w.signedAt);
+      // Recording the check is a change to the waiver, so a mirror polling `listChangedSince` sees it.
+      if (w.idCheck && Date.parse(w.idCheck.checkedAt) > Date.parse(w.updatedAt)) w.updatedAt = w.idCheck.checkedAt;
+      return w;
     };
     for (let site = 0; site < 2; site++) {
       for (let i = 0; i < (options.validPerSite ?? 6); i++) this.waivers.push(base(site, {}));

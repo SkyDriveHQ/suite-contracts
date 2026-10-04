@@ -53,6 +53,29 @@ describe('waiver boundary', () => {
     expect(all.some((w) => w.waiverId === superseded.supersededBy)).toBe(true);
   });
 
+  it('records an in-person ID check on every waiver past the desk, and none on one awaiting confirmation', async () => {
+    const e = engine();
+    const all = [];
+    for (const s of await e.listSites()) all.push(...(await e.listChangedSince(s.siteId, '2000-01-01T00:00:00Z')));
+    const valid = all.filter((w) => w.status === 'valid');
+    expect(valid.length).toBeGreaterThan(0);
+    // Kyle's rule: a valid waiver is one confirmed against ID in person, from every channel.
+    for (const w of valid) {
+      expect(w.idCheck).toMatchObject({ method: 'in-person' });
+      expect(w.idCheck!.checkedBy.length).toBeGreaterThan(0);
+      expect(Date.parse(w.idCheck!.checkedAt)).toBeGreaterThanOrEqual(Date.parse(w.signedAt));
+      expect(Date.parse(w.updatedAt)).toBeGreaterThanOrEqual(Date.parse(w.idCheck!.checkedAt));
+    }
+    expect(new Set(valid.map((w) => w.channel))).toEqual(new Set(['kiosk', 'link', 'paper']));
+    for (const w of all.filter((x) => x.status === 'lapsed' || x.status === 'superseded')) {
+      expect(w.idCheck).toMatchObject({ method: 'in-person' });
+      expect(Date.parse(w.idCheck!.checkedAt)).toBeGreaterThanOrEqual(Date.parse(w.signedAt));
+    }
+    const awaiting = all.filter((w) => w.status === 'awaiting-confirmation');
+    expect(awaiting.length).toBe(1);
+    expect(awaiting[0]!.idCheck).toBeNull();
+  });
+
   it('tells subscribers when a waiver is signed', async () => {
     const e = engine();
     const seen: WaiverWebhookEvent[] = [];

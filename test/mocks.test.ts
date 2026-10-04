@@ -20,6 +20,7 @@ import {
   mockPackingDay,
   mockPilotReports,
   mockRigService,
+  mockWaiverEngine,
   mockWeather,
   SUITE_MOCK_SENTINEL,
 } from '../src/mocks/index.js';
@@ -53,6 +54,22 @@ describe('scenario provenance', () => {
     const a = await mockInstructorRoster(new MockScenario({ seed: 7, activityDate: DAY })).getRoster(DAY);
     const b = await mockInstructorRoster(new MockScenario({ seed: 7, activityDate: DAY })).getRoster(DAY);
     expect(a.map((i) => i.name.last)).toEqual(b.map((i) => i.name.last));
+  });
+
+  it('reproduces the same waiver ID checks from the same seed', async () => {
+    const checks = async (seed: number) => {
+      const e = mockWaiverEngine(new MockScenario({ seed, activityDate: DAY }));
+      const out = [];
+      for (const s of await e.listSites()) out.push(...(await e.listChangedSince(s.siteId, '2000-01-01T00:00:00Z')));
+      return out;
+    };
+    const a = await checks(7);
+    const b = await checks(7);
+    expect(a.map((w) => w.idCheck)).toEqual(b.map((w) => w.idCheck));
+    expect(a.map((w) => w.participant.name)).toEqual(b.map((w) => w.participant.name));
+    // The checks draw from their own stream: a different seed changes them too.
+    const c = await checks(8);
+    expect(a.map((w) => w.idCheck?.checkedBy ?? null)).not.toEqual(c.map((w) => w.idCheck?.checkedBy ?? null));
   });
 
   it('produces a different day from a different seed', async () => {
