@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MockScenario, mockWaiverEngine } from '../src/mocks/index.js';
-import { SiblingUnreachableError, usableWaivers, type WaiverWebhookEvent } from '../src/index.js';
+import { SiblingUnreachableError, usableWaivers, usableWaiversCheckedInPerson, type WaiverSummary, type WaiverWebhookEvent } from '../src/index.js';
 
 const engine = () => mockWaiverEngine(new MockScenario({ seed: 7, activityDate: '2026-10-03' }));
 
@@ -53,6 +53,29 @@ describe('waiver boundary', () => {
     expect(all.some((w) => w.waiverId === superseded.supersededBy)).toBe(true);
   });
 
+  it('records an in-person ID check on every waiver past the desk, and none on one awaiting confirmation', async () => {
+    const e = engine();
+    const all = [];
+    for (const s of await e.listSites()) all.push(...(await e.listChangedSince(s.siteId, '2000-01-01T00:00:00Z')));
+    const valid = all.filter((w) => w.status === 'valid');
+    expect(valid.length).toBeGreaterThan(0);
+    // Kyle's rule: a valid waiver is one confirmed against ID in person, from every channel.
+    for (const w of valid) {
+      expect(w.idCheck).toMatchObject({ method: 'in-person' });
+      expect(w.idCheck!.checkedBy.length).toBeGreaterThan(0);
+      expect(Date.parse(w.idCheck!.checkedAt)).toBeGreaterThanOrEqual(Date.parse(w.signedAt));
+      expect(Date.parse(w.updatedAt)).toBeGreaterThanOrEqual(Date.parse(w.idCheck!.checkedAt));
+    }
+    expect(new Set(valid.map((w) => w.channel))).toEqual(new Set(['kiosk', 'link', 'paper']));
+    for (const w of all.filter((x) => x.status === 'lapsed' || x.status === 'superseded')) {
+      expect(w.idCheck).toMatchObject({ method: 'in-person' });
+      expect(Date.parse(w.idCheck!.checkedAt)).toBeGreaterThanOrEqual(Date.parse(w.signedAt));
+    }
+    const awaiting = all.filter((w) => w.status === 'awaiting-confirmation');
+    expect(awaiting.length).toBe(1);
+    expect(awaiting[0]!.idCheck).toBeNull();
+  });
+
   it('tells subscribers when a waiver is signed', async () => {
     const e = engine();
     const seen: WaiverWebhookEvent[] = [];
@@ -61,6 +84,56 @@ describe('waiver boundary', () => {
     off();
     e.signNow();
     expect(seen.map((ev) => ev.type)).toEqual(['waiver.signed']);
+  });
+
+  it('brings a newly signed waiver in awaiting confirmation, with no ID check, never valid', async () => {
+    const e = engine();
+    const w = e.signNow();
+    expect(w.status).toBe('awaiting-confirmation');
+    expect(w.idCheck).toBeNull();
+    expect(usableWaivers([w])).toEqual([]);
+    expect((await e.getWaiver(w.waiverId))!.status).toBe('awaiting-confirmation');
+  });
+
+  it('confirms a waiver only when staff record a fresh in-person ID check', async () => {
+    const e = engine();
+    const seen: WaiverWebhookEvent[] = [];
+    e.subscribe((ev) => seen.push(ev));
+    const signed = e.signNow();
+    const confirmed = e.confirmNow(signed.waiverId);
+    expect(confirmed).toMatchObject({ waiverId: signed.waiverId, status: 'valid', version: signed.version + 1 });
+    expect(confirmed.idCheck).toMatchObject({ method: 'in-person' });
+    expect(confirmed.idCheck!.checkedBy.length).toBeGreaterThan(0);
+    expect(Date.parse(confirmed.idCheck!.checkedAt)).toBeGreaterThanOrEqual(Date.parse(signed.signedAt));
+    expect(confirmed.updatedAt).toBe(confirmed.idCheck!.checkedAt);
+    expect(await e.getWaiver(signed.waiverId)).toEqual(confirmed);
+    expect(seen.map((ev) => ev.type)).toEqual(['waiver.signed', 'waiver.confirmed']);
+    expect(seen[1]!.waiver).toEqual(confirmed);
+    expect(new Set(seen.map((ev) => ev.eventId)).size).toBe(2);
+    expect(usableWaiversCheckedInPerson([confirmed])).toEqual([confirmed]);
+    // Only a waiver awaiting confirmation can be confirmed.
+    expect(() => e.confirmNow(signed.waiverId)).toThrow();
+  });
+
+  it('keeps only waivers checked in person when the host follows the rule, failing closed', () => {
+    const valid = { status: 'valid' } as WaiverSummary;
+    const checkedIn = { ...valid, idCheck: { checkedBy: 'Desk staff', checkedAt: '2026-10-03T08:10:00Z', method: 'in-person' } } as WaiverSummary;
+    const notYet = { ...valid, idCheck: null } as WaiverSummary;
+    const beforeTheField = valid; // no idCheck key: a producer from before v0.5.0
+    const awaiting = { status: 'awaiting-confirmation', idCheck: null } as WaiverSummary;
+    const lapsedButChecked = { ...checkedIn, status: 'lapsed' } as WaiverSummary;
+    const all = [checkedIn, notYet, beforeTheField, awaiting, lapsedButChecked];
+    expect(usableWaiversCheckedInPerson(all)).toEqual([checkedIn]);
+    // The older helper is unchanged: status only.
+    expect(usableWaivers(all)).toEqual([checkedIn, notYet, beforeTheField]);
+  });
+
+  it('agrees with the mock: every valid waiver it serves was checked in person', async () => {
+    const e = engine();
+    for (const s of await e.listSites()) {
+      const all = await e.listChangedSince(s.siteId, '2000-01-01T00:00:00Z');
+      expect(usableWaiversCheckedInPerson(all)).toEqual(usableWaivers(all));
+    }
   });
 
   it('is a typed, catchable state when SkyWaiver cannot be reached', async () => {

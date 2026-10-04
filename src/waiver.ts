@@ -27,6 +27,15 @@
  * SkyWaiver reports facts (`status`: valid, lapsed, awaiting confirmation, superseded). Whether a missing
  * or lapsed waiver blocks check-in is the host's rule (in DZGO, a hard block; Kyle, DZM-Q-057).
  *
+ * ## Every waiver is checked against ID in person (v0.5.0)
+ *
+ * Kyle's rule (Ops abc8a464): "All waivers signed in any way must by checked against ID in person and
+ * confirmed to match the person to the waiver." So no waiver, from any channel (kiosk, link, poster,
+ * paper, import or vendor), is `valid` until staff have checked the person's ID in person and recorded
+ * that it matches. `idCheck` on the summary says who did that and when. A host that enforces the rule
+ * fails closed: a waiver whose `idCheck` is `null` or absent is not confirmed against ID, whatever its
+ * `status` says. `usableWaiversCheckedInPerson` does exactly that.
+ *
  * ## Rule 13 and the mirror rule
  *
  * SkyWaiver is an optional overlay. A host keeps its own waivers (DZGO: native, paper, imported) as its
@@ -94,11 +103,26 @@ export interface WaiverSignature {
 export type WaiverChannel = 'kiosk' | 'link' | 'poster' | 'paper' | 'import' | 'vendor';
 
 /**
- * What SkyWaiver says about it now. `lapsed`: past the operator's validity. `awaiting-confirmation`: the
- * operator requires a person at the desk to confirm remote waivers, and nobody has yet. `superseded`: a
- * correction replaced it (`supersededBy`).
+ * What SkyWaiver says about it now. `valid`: signed, in date, and confirmed by staff against the person's
+ * ID in person (see `idCheck`). `lapsed`: past the operator's validity. `awaiting-confirmation`: signed,
+ * but nobody at the desk has yet checked the person's ID in person and matched them to the waiver. Under
+ * Kyle's rule this applies to **every** waiver from **every** channel, not only remote ones: each one
+ * waits here until the ID check is recorded. `superseded`: a correction replaced it (`supersededBy`).
  */
 export type WaiverStatus = 'valid' | 'lapsed' | 'awaiting-confirmation' | 'superseded';
+
+/**
+ * A member of staff checked the person's ID in person and confirmed it matches the person named on the
+ * waiver. Recorded by the producer (SkyWaiver) at the moment the check is done.
+ */
+export interface WaiverIdCheck {
+  /** Who checked: the staff member's display name, or their id, as the producer knows them. */
+  checkedBy: string;
+  /** When the check was recorded. */
+  checkedAt: ISODateTime;
+  /** How it was checked. Only ever in person: Kyle's rule allows no other way. */
+  method: 'in-person';
+}
 
 export type WaiverSummary = SuiteProvenance & {
   waiverId: string;
@@ -124,6 +148,23 @@ export type WaiverSummary = SuiteProvenance & {
   signingSession: string | null;
   supersededBy: string | null;
   signature: WaiverSignature | null;
+  /**
+   * Whether staff have checked this person's ID in person against the waiver (v0.5.0).
+   *
+   * - **An object**: yes. Staff checked the ID in person and matched the person to the waiver; it says
+   *   who and when.
+   * - **`null`**: not yet. The producer follows the rule and is saying plainly that nobody has checked.
+   * - **Absent**: the producer was built before this field existed and cannot say. A host must treat
+   *   that exactly like `null` (not checked) and fail closed, never assume a check happened.
+   *
+   * A `valid` waiver from a producer that follows Kyle's rule always carries an object here. That is how
+   * a host tells a `valid` confirmed against ID from one written before the rule.
+   *
+   * Optional, rather than required, so that producers built against v0.4 still compile against this
+   * version; a later major version may make it required. With `exactOptionalPropertyTypes` on, the key is
+   * either left out or holds an object or `null`; it never holds `undefined`.
+   */
+  idCheck?: WaiverIdCheck | null;
   /** Only ever increases. A mirror keeps the copy with the highest version (`isNewerThan` in booking.ts). */
   version: number;
   updatedAt: ISODateTime;
@@ -147,6 +188,7 @@ interface EventBase {
 /** Everything SkyWaiver tells a host, by signed webhook (the same signature format as SkyBook's). */
 export type WaiverWebhookEvent =
   | (EventBase & { type: 'waiver.signed'; waiver: WaiverSummary })
+  /** Staff recorded the in-person ID check: the waiver is now `valid` and carries `idCheck`. */
   | (EventBase & { type: 'waiver.confirmed'; waiver: WaiverSummary })
   | (EventBase & { type: 'waiver.corrected'; waiver: WaiverSummary; supersedes: string });
 
@@ -169,7 +211,23 @@ export interface WaiverEngineAdapter {
   subscribe(listener: (event: WaiverWebhookEvent) => void): Unsubscribe;
 }
 
-/** The waivers a host may treat as current for a person: valid, and not superseded. */
+/**
+ * The waivers SkyWaiver reports as current for a person: valid, and not superseded.
+ *
+ * This looks at `status` only, as it did before v0.5.0; it does not look at `idCheck`, so it still
+ * returns a `valid` waiver written before Kyle's in-person ID rule. **A host that follows the rule uses
+ * `usableWaiversCheckedInPerson` instead.**
+ */
 export function usableWaivers(waivers: readonly WaiverSummary[]): WaiverSummary[] {
   return waivers.filter((w) => w.status === 'valid');
+}
+
+/**
+ * The waivers a host following Kyle's rule may treat as current for a person (v0.5.0): valid, not
+ * superseded, **and** checked against the person's ID in person, so `idCheck` is an object. A `null`
+ * `idCheck` (not yet checked) or a missing one (a producer from before the field) counts as not
+ * checked, and the waiver is left out: this fails closed.
+ */
+export function usableWaiversCheckedInPerson(waivers: readonly WaiverSummary[]): WaiverSummary[] {
+  return usableWaivers(waivers).filter((w) => w.idCheck != null && w.idCheck.method === 'in-person');
 }
