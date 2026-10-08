@@ -1,7 +1,7 @@
 {
   "name": "@skydrive/suite-contracts",
   "version": "0.5.0",
-  "description": "The cross-product boundary contracts for the SkyDrive suite, plus a mock generator for every seam. Types and pure functions only — no I/O, no vendor code, no product code, and no dependencies.",
+  "description": "The cross-product boundary contracts for the Stratica suite, plus a mock generator for every seam. Types and pure functions only — no I/O, no vendor code, no product code, and no dependencies.",
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
