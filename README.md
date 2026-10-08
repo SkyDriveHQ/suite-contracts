@@ -1,6 +1,6 @@
 # @skydrive/suite-contracts
 
-**The cross-product boundary contracts for the SkyDrive suite, plus a mock generator for every seam.**
+**The cross-product boundary contracts for the Stratica suite, plus a mock generator for every seam.**
 
 Types and pure functions only. No I/O, no vendor code, no product code, and no dependencies.
 
@@ -101,7 +101,7 @@ than by care.
 
 ## Rule 13, which this package must never be used to break
 
-> No SkyDrive product may be a required dependency of another.
+> No Stratica product may be a required dependency of another.
 
 Every adapter here is an **optional overlay on a native path the consuming product already has**.
 DZGO has its own roster, its own rig records, its own packing desk. The sibling adds to them when
