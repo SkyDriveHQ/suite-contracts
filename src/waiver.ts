@@ -36,6 +36,24 @@
  * fails closed: a waiver whose `idCheck` is `null` or absent is not confirmed against ID, whatever its
  * `status` says. `usableWaiversCheckedInPerson` does exactly that.
  *
+ * ## v0.6.0: the desk check from a host, webhooks, and the smart-waiver facts
+ *
+ * - **A desk check made in a host reaches SkyWaiver** (`confirmIdCheck`). The adapter is bound to the
+ *   signed-in staff member's own shared-login session, and that person must be on the SkyWaiver site's staff
+ *   list: the check is recorded against them, exactly as at SkyWaiver's own desk. No host secret can confirm
+ *   a waiver. A shared desk login says who actually checked in `attestedBy`. Repeating a call is safe.
+ * - **"Awaiting confirmation" is said one way everywhere**: `WAIVER_STATUS_WORDS`, in the words of Kyle's rule.
+ * - **Webhooks are signed the way SkyBook's are**: `SkyWaiver-Signature: t=<unix seconds>,v1=<hex>`, the
+ *   HMAC-SHA256 of `"<t>.<raw body>"` with the connection's secret, checked within 300 seconds. This package
+ *   names the format and parses the header; the waiver client does the cryptography (Web Crypto).
+ *   `waiver.updated` is new: a walk-up waiver matched at the desk, a medical clearance recorded, or a consent
+ *   withdrawn.
+ * - **The smart-waiver facts (V8)**: `needs-clearance` (a YES to a health question that needs a doctor's
+ *   clearance: the person signs, and takes part only once staff record the clearance), the initials on each
+ *   clause that asks for them (inside `signature`), an emergency contact, consents such as photos or
+ *   marketing (each asked, never assumed, and withdrawable), and the language signed in. Each is **absent**
+ *   when it was not asked, never null, as `fields` already is.
+ *
  * ## Rule 13 and the mirror rule
  *
  * SkyWaiver is an optional overlay. A host keeps its own waivers (DZGO: native, paper, imported) as its
@@ -97,19 +115,45 @@ export interface WaiverSignature {
   signedBy: 'participant' | 'guardian';
   /** Weak evidence, kept because it is free and occasionally decisive. */
   userAgent: string | null;
+  /**
+   * The signer's initials on each clause that asked for them, by the clause's id (v0.6.0). Part of the
+   * signature evidence, so as final as the rest of it. Absent when the text asked for no initials.
+   */
+  initials?: Record<string, string>;
 }
 
 /** How it was signed. */
 export type WaiverChannel = 'kiosk' | 'link' | 'poster' | 'paper' | 'import' | 'vendor';
 
 /**
- * What SkyWaiver says about it now. `valid`: signed, in date, and confirmed by staff against the person's
- * ID in person (see `idCheck`). `lapsed`: past the operator's validity. `awaiting-confirmation`: signed,
- * but nobody at the desk has yet checked the person's ID in person and matched them to the waiver. Under
- * Kyle's rule this applies to **every** waiver from **every** channel, not only remote ones: each one
- * waits here until the ID check is recorded. `superseded`: a correction replaced it (`supersededBy`).
+ * What SkyWaiver says about it now, first match wins:
+ *
+ * - `superseded`: a correction replaced it (`supersededBy`).
+ * - `lapsed`: past the operator's validity.
+ * - `needs-clearance` (v0.6.0): the person answered YES to a health question that needs a doctor's
+ *   clearance. They have signed; they take part only once staff record the clearance (`clearance`).
+ * - `awaiting-confirmation`: signed, but nobody has yet checked the person's ID in person and confirmed it
+ *   matches the person on the waiver. Kyle's rule: **"All waivers signed in any way must be checked against
+ *   ID in person and confirmed to match the person to the waiver."** So this is every waiver, from every
+ *   channel (kiosk, link, poster, paper, import, vendor), until the check is recorded; no setting skips it.
+ * - `valid`: signed, in date, cleared if it needed clearing, and confirmed against ID in person (`idCheck`).
+ *
+ * Only `valid` lets a person take part. A host built before v0.6.0 that keeps only `valid` waivers therefore
+ * already treats `needs-clearance` as not usable: it fails closed.
  */
-export type WaiverStatus = 'valid' | 'lapsed' | 'awaiting-confirmation' | 'superseded';
+export type WaiverStatus = 'valid' | 'lapsed' | 'needs-clearance' | 'awaiting-confirmation' | 'superseded';
+
+/**
+ * How every host says each status to staff (v0.6.0), so "awaiting confirmation" means the same thing on
+ * every screen: the in-person ID check, for every waiver.
+ */
+export const WAIVER_STATUS_WORDS: Readonly<Record<WaiverStatus, string>> = {
+  valid: 'Valid',
+  lapsed: 'Lapsed',
+  'needs-clearance': 'Needs medical clearance',
+  'awaiting-confirmation': 'Awaiting ID check in person',
+  superseded: 'Replaced by a correction',
+};
 
 /**
  * A member of staff checked the person's ID in person and confirmed it matches the person named on the
@@ -122,6 +166,30 @@ export interface WaiverIdCheck {
   checkedAt: ISODateTime;
   /** How it was checked. Only ever in person: Kyle's rule allows no other way. */
   method: 'in-person';
+}
+
+/** Someone the signer named to call in an emergency (v0.6.0). */
+export interface WaiverEmergencyContact {
+  name: string;
+  phone: string;
+  relationship: string | null;
+}
+
+/** One consent the signer was asked for (photos, marketing…), as they answered it (v0.6.0). */
+export interface WaiverConsent {
+  /** What they answered when they signed. Never pre-ticked: every consent is asked. */
+  given: boolean;
+  /** When staff recorded that they withdrew it. `null` while it stands. */
+  withdrawnAt: ISODateTime | null;
+}
+
+/** A waiver that needs a medical clearance before the person takes part (v0.6.0). */
+export interface WaiverClearance {
+  required: true;
+  /** The health questions answered YES that need it, by id. Empty when staff recorded it from paper. */
+  flaggedQuestions: string[];
+  /** Who recorded the clearance, and when. `null` until they do; the status is then `needs-clearance`. */
+  cleared: { clearedBy: string; clearedAt: ISODateTime } | null;
 }
 
 export type WaiverSummary = SuiteProvenance & {
@@ -165,6 +233,14 @@ export type WaiverSummary = SuiteProvenance & {
    * either left out or holds an object or `null`; it never holds `undefined`.
    */
   idCheck?: WaiverIdCheck | null;
+  /** The language of the text signed, e.g. `es` or `en` (v0.6.0). Absent when not known. */
+  signingLanguage?: string;
+  /** Absent when none was given (v0.6.0). */
+  emergencyContact?: WaiverEmergencyContact;
+  /** Every consent the text asked for, by its field id (v0.6.0). Absent when it asked for none. */
+  consents?: Record<string, WaiverConsent>;
+  /** Present only when a medical clearance is needed (v0.6.0). Absent: none is needed. */
+  clearance?: WaiverClearance;
   /** Only ever increases. A mirror keeps the copy with the highest version (`isNewerThan` in booking.ts). */
   version: number;
   updatedAt: ISODateTime;
@@ -185,12 +261,84 @@ interface EventBase {
   at: ISODateTime;
 }
 
-/** Everything SkyWaiver tells a host, by signed webhook (the same signature format as SkyBook's). */
+/** What a `waiver.updated` event reports (v0.6.0). */
+export type WaiverChange = 'matched' | 'cleared' | 'consent-withdrawn';
+
+/**
+ * Everything SkyWaiver tells a host, by signed webhook (the same signature format as SkyBook's; see
+ * `WAIVER_SIGNATURE_HEADER`). The body is this JSON exactly. `eventId` is the same on every retry of one
+ * delivery: the idempotency key. Each event carries the whole waiver; a mirror keeps the highest `version`.
+ */
 export type WaiverWebhookEvent =
+  /** A waiver was signed or recorded (kiosk, link, poster, paper, import). It arrives awaiting confirmation. */
   | (EventBase & { type: 'waiver.signed'; waiver: WaiverSummary })
-  /** Staff recorded the in-person ID check: the waiver is now `valid` and carries `idCheck`. */
+  /** Staff recorded the in-person ID check: the waiver carries `idCheck` (and is `valid` unless it needs clearance). */
   | (EventBase & { type: 'waiver.confirmed'; waiver: WaiverSummary })
-  | (EventBase & { type: 'waiver.corrected'; waiver: WaiverSummary; supersedes: string });
+  /** A correction replaced the waiver `supersedes`, which is now `superseded`. The correction needs its own ID check. */
+  | (EventBase & { type: 'waiver.corrected'; waiver: WaiverSummary; supersedes: string })
+  /** Anything else that changed (v0.6.0): matched to a booking at the desk, cleared medically, or a consent withdrawn. */
+  | (EventBase & { type: 'waiver.updated'; waiver: WaiverSummary; change: WaiverChange });
+
+/** The header SkyWaiver signs every webhook with (v0.6.0). */
+export const WAIVER_SIGNATURE_HEADER = 'SkyWaiver-Signature';
+/** The header carrying the event's id, the same as the body's `eventId`. */
+export const WAIVER_EVENT_ID_HEADER = 'SkyWaiver-Event-Id';
+/** How far a signature's timestamp may be from now, either way, before a host refuses it. */
+export const WAIVER_SIGNATURE_TOLERANCE_SECONDS = 300;
+
+/** The string the HMAC-SHA256 is computed over: the timestamp, a dot, and the raw body exactly as received. */
+export function waiverSignedContent(timestampSeconds: number, rawBody: string): string {
+  return `${timestampSeconds}.${rawBody}`;
+}
+
+/**
+ * Reads `t=<unix seconds>,v1=<64 hex>` (SkyBook's format). `null` when the header is missing or malformed;
+ * the caller refuses the webhook. Checking the HMAC itself is the waiver client's job.
+ */
+export function parseWaiverSignatureHeader(header: string | null | undefined): { timestampSeconds: number; v1: string } | null {
+  if (!header) return null;
+  const parts = new Map<string, string>();
+  for (const part of header.split(',')) {
+    const i = part.indexOf('=');
+    if (i > 0) parts.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+  }
+  const t = parts.get('t');
+  const v1 = parts.get('v1');
+  if (t === undefined || !/^\d{1,12}$/.test(t) || v1 === undefined || !/^[0-9a-f]{64}$/.test(v1)) return null;
+  return { timestampSeconds: Number(t), v1 };
+}
+
+/**
+ * A desk check made in a host app, sent to SkyWaiver (v0.6.0).
+ *
+ * **Who may send it:** the staff member themself. The adapter is bound to their shared-login session, and
+ * they must be on the SkyWaiver site's staff list; SkyWaiver records the check against them. A host's own
+ * secret or service key cannot confirm a waiver.
+ */
+export interface WaiverIdCheckRequest {
+  waiverId: string;
+  /** The staff member's explicit statement that they checked the person's ID in person and it matches. */
+  idCheckedInPerson: true;
+  /** When the check was done, if not now: a host that was offline. At most 72 hours ago, never before signing. */
+  checkedAt?: ISODateTime;
+  /** The host's own name for who checked, when one login serves a shared desk device. */
+  attestedBy?: string;
+}
+
+export type WaiverIdCheckResult =
+  /** Recorded now. `waiver` carries the new `idCheck`. */
+  | { result: 'confirmed'; waiver: WaiverSummary }
+  /** It was already confirmed (perhaps by this same call, retried). Nothing new was recorded. */
+  | { result: 'already-confirmed'; waiver: WaiverSummary }
+  /** A correction replaced it; nothing was recorded. Check the correction (`waiver.supersededBy`). */
+  | { result: 'superseded'; waiver: WaiverSummary }
+  /**
+   * Refused, with SkyWaiver's words for staff. `not-found`: no such waiver at a site this person is staff
+   * at (also how "not on SkyWaiver's staff list" looks). `out-of-time`: `checkedAt` is ahead of now, before
+   * the waiver was signed, or more than 72 hours ago: check the ID again. The host keeps its own record of
+   * the check either way.
+   */
+  | { result: 'refused'; reason: 'not-found' | 'out-of-time'; message: string };
 
 export type WaiverWebhookEventType = WaiverWebhookEvent['type'];
 
@@ -209,6 +357,8 @@ export interface WaiverEngineAdapter {
   /** For mirroring: everything changed at the site since an instant. */
   listChangedSince(siteId: string, since: ISODateTime): Promise<WaiverSummary[]>;
   subscribe(listener: (event: WaiverWebhookEvent) => void): Unsubscribe;
+  /** Record a desk check made in the host (v0.6.0). See `WaiverIdCheckRequest` for who may call it. */
+  confirmIdCheck(request: WaiverIdCheckRequest): Promise<WaiverIdCheckResult>;
 }
 
 /**
@@ -224,7 +374,8 @@ export function usableWaivers(waivers: readonly WaiverSummary[]): WaiverSummary[
 
 /**
  * The waivers a host following Kyle's rule may treat as current for a person (v0.5.0): valid, not
- * superseded, **and** checked against the person's ID in person, so `idCheck` is an object. A `null`
+ * superseded, **and** checked against the person's ID in person, so `idCheck` is an object. A waiver that
+ * needs a medical clearance is not `valid` until it is cleared (v0.6.0), so it is left out too. A `null`
  * `idCheck` (not yet checked) or a missing one (a producer from before the field) counts as not
  * checked, and the waiver is left out: this fails closed.
  */
