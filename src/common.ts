@@ -53,6 +53,8 @@ export type SuiteSource =
   | 'booking'
   /** SkyWaiver, the standalone waiver engine (DEC-165, part 2). ⚠️ PROPOSED with `waiver.ts`. */
   | 'waiver'
+  /** MORAD, flight operations rebuilt from public tracking data (DEC-166). ⚠️ PROPOSED with `flightops.ts`. */
+  | 'flightops'
   | 'manual'
   | 'import';
 
