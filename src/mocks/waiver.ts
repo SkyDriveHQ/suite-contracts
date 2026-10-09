@@ -63,6 +63,7 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
   private waivers: WaiverSummary[] = [];
   private listeners = new Set<(event: WaiverWebhookEvent) => void>();
   private unreachable = false;
+  private connectionActive = true;
   private eventSeq = 0;
   /** Its own stream, so the ID checks do not shift any name or date drawn from 'waivers'. */
   private checks: Rng;
@@ -172,6 +173,15 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
     this.unreachable = false;
   }
 
+  /** Test helper: the host's connection is switched off in SkyWaiver, so `confirmIdCheck` answers `invalid`, until `reconnect()`. */
+  disconnect(): void {
+    this.connectionActive = false;
+  }
+
+  reconnect(): void {
+    this.connectionActive = true;
+  }
+
   private check(): void {
     if (this.unreachable) throw new SiblingUnreachableError('waiver');
   }
@@ -246,6 +256,9 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
    */
   async confirmIdCheck(request: WaiverIdCheckRequest): Promise<WaiverIdCheckResult> {
     this.check();
+    if (!this.connectionActive) return { result: 'refused', reason: 'invalid', message: 'This connection is switched off in SkyWaiver.' };
+    if ((request.idCheckedInPerson as boolean) !== true) return { result: 'refused', reason: 'invalid', message: 'Check their ID in person first.' };
+    if (request.attestedBy !== undefined && request.attestedBy.length > 100) return { result: 'refused', reason: 'invalid', message: 'The name of who checked is too long (100 characters at most).' };
     const i = this.waivers.findIndex((w) => w.waiverId === request.waiverId);
     const before = this.waivers[i];
     if (!before) return { result: 'refused', reason: 'not-found', message: 'No such waiver at your sites.' };

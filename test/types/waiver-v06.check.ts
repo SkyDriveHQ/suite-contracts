@@ -37,6 +37,7 @@ export const notChecked: WaiverIdCheckRequest = { waiverId: 'w-1', idCheckedInPe
 export const silent: WaiverIdCheckRequest = { waiverId: 'w-1' };
 
 // A refusal carries a reason and words for staff, never a waiver.
+export const invalid: WaiverIdCheckResult = { result: 'refused', reason: 'invalid', message: 'Fix the request.' };
 export const refused: WaiverIdCheckResult = { result: 'refused', reason: 'out-of-time', message: 'Check their ID again.' };
 // @ts-expect-error a refusal has no waiver to hand back.
 export const refusedWithWaiver: WaiverIdCheckResult = { result: 'refused', reason: 'not-found', message: 'x', waiver: beforeTheField };

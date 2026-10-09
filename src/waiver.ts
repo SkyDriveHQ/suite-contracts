@@ -321,7 +321,7 @@ export interface WaiverIdCheckRequest {
   idCheckedInPerson: true;
   /** When the check was done, if not now: a host that was offline. At most 72 hours ago, never before signing. */
   checkedAt?: ISODateTime;
-  /** The host's own name for who checked, when one login serves a shared desk device. */
+  /** The host's own name for who checked, when one login serves a shared desk device. At most 100 characters. */
   attestedBy?: string;
 }
 
@@ -335,10 +335,12 @@ export type WaiverIdCheckResult =
   /**
    * Refused, with SkyWaiver's words for staff. `not-found`: no such waiver at a site this person is staff
    * at (also how "not on SkyWaiver's staff list" looks). `out-of-time`: `checkedAt` is ahead of now, before
-   * the waiver was signed, or more than 72 hours ago: check the ID again. The host keeps its own record of
+   * the waiver was signed, or more than 72 hours ago: check the ID again. `invalid`: the request itself is not
+   * acceptable (the host's connection is switched off, `attestedBy` is longer than 100 characters, or the
+   * in-person statement is not `true`): fix the request or the connection. The host keeps its own record of
    * the check either way.
    */
-  | { result: 'refused'; reason: 'not-found' | 'out-of-time'; message: string };
+  | { result: 'refused'; reason: 'not-found' | 'out-of-time' | 'invalid'; message: string };
 
 export type WaiverWebhookEventType = WaiverWebhookEvent['type'];
 

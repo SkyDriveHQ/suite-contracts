@@ -206,6 +206,19 @@ describe('waiver boundary v0.6.0', () => {
     await expect(e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true })).rejects.toBeInstanceOf(SiblingUnreachableError);
   });
 
+  it('refuses an invalid desk check: inactive connection, a long attestedBy, or no in-person statement', async () => {
+    const e = engine();
+    const w = e.signNow();
+    expect(await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, attestedBy: 'x'.repeat(101) })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    expect(await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, attestedBy: 'x'.repeat(100) })).toMatchObject({ result: 'confirmed' });
+    const w2 = e.signNow();
+    expect(await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: false as unknown as true })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    e.disconnect();
+    expect(await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: true })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    e.reconnect();
+    expect((await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: true })).result).toBe('confirmed');
+  });
+
   it('says "awaiting confirmation" as the in-person ID check', () => {
     expect(WAIVER_STATUS_WORDS['awaiting-confirmation']).toBe('Awaiting ID check in person');
     expect(Object.keys(WAIVER_STATUS_WORDS).sort()).toEqual(['awaiting-confirmation', 'lapsed', 'needs-clearance', 'superseded', 'valid']);
