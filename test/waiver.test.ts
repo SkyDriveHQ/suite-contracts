@@ -5,7 +5,16 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MockScenario, mockWaiverEngine } from '../src/mocks/index.js';
-import { SiblingUnreachableError, usableWaivers, usableWaiversCheckedInPerson, type WaiverSummary, type WaiverWebhookEvent } from '../src/index.js';
+import {
+  SiblingUnreachableError,
+  WAIVER_STATUS_WORDS,
+  parseWaiverSignatureHeader,
+  usableWaivers,
+  usableWaiversCheckedInPerson,
+  waiverSignedContent,
+  type WaiverSummary,
+  type WaiverWebhookEvent,
+} from '../src/index.js';
 
 const engine = () => mockWaiverEngine(new MockScenario({ seed: 7, activityDate: '2026-10-03' }));
 
@@ -45,7 +54,7 @@ describe('waiver boundary', () => {
     const e = engine();
     const statuses = new Set<string>();
     for (const s of await e.listSites()) for (const w of await e.listChangedSince(s.siteId, '2000-01-01T00:00:00Z')) statuses.add(w.status);
-    expect(statuses).toEqual(new Set(['valid', 'lapsed', 'awaiting-confirmation', 'superseded']));
+    expect(statuses).toEqual(new Set(['valid', 'lapsed', 'needs-clearance', 'awaiting-confirmation', 'superseded']));
     const ball = (await e.listSites())[1]!;
     const all = await e.listChangedSince(ball.siteId, '2000-01-01T00:00:00Z');
     expect(usableWaivers(all).every((w) => w.status === 'valid')).toBe(true);
@@ -143,5 +152,85 @@ describe('waiver boundary', () => {
     await expect(e.listSites()).rejects.toMatchObject({ product: 'waiver' });
     e.comeBack();
     expect((await e.listSites()).length).toBe(2);
+  });
+});
+
+describe('waiver boundary v0.6.0', () => {
+  it('keeps a waiver that needs a medical clearance out of the usable ones, even once its ID is checked', async () => {
+    const e = engine();
+    const ball = (await e.listSites())[1]!;
+    const all = await e.listChangedSince(ball.siteId, '2000-01-01T00:00:00Z');
+    const needs = all.find((w) => w.status === 'needs-clearance')!;
+    expect(needs.clearance).toEqual({ required: true, flaggedQuestions: ['heartCondition'], cleared: null });
+    expect(needs.idCheck).toMatchObject({ method: 'in-person' });
+    expect(usableWaiversCheckedInPerson([needs])).toEqual([]);
+    expect(usableWaivers([needs])).toEqual([]);
+  });
+
+  it('leaves the smart-waiver facts absent where they were not asked, never null', async () => {
+    const e = engine();
+    const [sky] = await e.listSites();
+    const all = await e.listChangedSince(sky!.siteId, '2000-01-01T00:00:00Z');
+    const v8 = all.find((w) => w.signingLanguage !== undefined)!;
+    expect(v8.signature?.initials).toEqual({ risks: 'MS' });
+    expect(v8.consents).toEqual({ photoConsent: { given: true, withdrawnAt: null } });
+    for (const w of all.filter((x) => x !== v8)) {
+      for (const k of ['signingLanguage', 'emergencyContact', 'consents', 'clearance'] as const) expect(k in w, `${w.waiverId} ${k}`).toBe(false);
+      if (w.signature) expect('initials' in w.signature).toBe(false);
+    }
+  });
+
+  it('confirms a desk check made in a host once, and says so plainly when asked again', async () => {
+    const e = engine();
+    const seen: WaiverWebhookEvent[] = [];
+    e.subscribe((ev) => seen.push(ev));
+    const w = e.signNow();
+    const first = await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, attestedBy: 'Jo at the desk' });
+    expect(first.result).toBe('confirmed');
+    if (first.result !== 'confirmed') return;
+    expect(first.waiver).toMatchObject({ status: 'valid', idCheck: { checkedBy: 'Jo at the desk', method: 'in-person' }, version: w.version + 1 });
+    expect((await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true })).result).toBe('already-confirmed');
+    expect(seen.map((ev) => ev.type)).toEqual(['waiver.signed', 'waiver.confirmed']);
+  });
+
+  it('refuses an unknown waiver and a check outside the time allowed, and answers "superseded" for a corrected one', async () => {
+    const e = engine();
+    const w = e.signNow();
+    expect(await e.confirmIdCheck({ waiverId: 'nope', idCheckedInPerson: true })).toMatchObject({ result: 'refused', reason: 'not-found' });
+    const ahead = new Date(Date.now() + 3_600_000).toISOString();
+    expect(await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, checkedAt: ahead })).toMatchObject({ result: 'refused', reason: 'out-of-time' });
+    const ball = (await e.listSites())[1]!;
+    const superseded = (await e.listChangedSince(ball.siteId, '2000-01-01T00:00:00Z')).find((x) => x.status === 'superseded')!;
+    expect((await e.confirmIdCheck({ waiverId: superseded.waiverId, idCheckedInPerson: true })).result).toBe('superseded');
+    e.goUnreachable();
+    await expect(e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true })).rejects.toBeInstanceOf(SiblingUnreachableError);
+  });
+
+  it('refuses an invalid desk check: inactive connection, a long attestedBy, or no in-person statement', async () => {
+    const e = engine();
+    const w = e.signNow();
+    expect(await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, attestedBy: 'x'.repeat(101) })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    expect(await e.confirmIdCheck({ waiverId: w.waiverId, idCheckedInPerson: true, attestedBy: 'x'.repeat(100) })).toMatchObject({ result: 'confirmed' });
+    const w2 = e.signNow();
+    expect(await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: false as unknown as true })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    e.disconnect();
+    expect(await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: true })).toMatchObject({ result: 'refused', reason: 'invalid' });
+    e.reconnect();
+    expect((await e.confirmIdCheck({ waiverId: w2.waiverId, idCheckedInPerson: true })).result).toBe('confirmed');
+  });
+
+  it('says "awaiting confirmation" as the in-person ID check', () => {
+    expect(WAIVER_STATUS_WORDS['awaiting-confirmation']).toBe('Awaiting ID check in person');
+    expect(Object.keys(WAIVER_STATUS_WORDS).sort()).toEqual(['awaiting-confirmation', 'lapsed', 'needs-clearance', 'superseded', 'valid']);
+  });
+
+  it('reads the signature header in the booking engine format, and names the signed content', () => {
+    const v1 = 'a'.repeat(64);
+    expect(parseWaiverSignatureHeader(`t=1760000000,v1=${v1}`)).toEqual({ timestampSeconds: 1760000000, v1 });
+    expect(parseWaiverSignatureHeader(` v1=${v1} , t=1760000000 `)).toEqual({ timestampSeconds: 1760000000, v1 });
+    for (const bad of [null, undefined, '', `t=abc,v1=${v1}`, 't=1760000000', `t=1,v1=${'A'.repeat(64)}`, `v1=${v1}`]) {
+      expect(parseWaiverSignatureHeader(bad), String(bad)).toBeNull();
+    }
+    expect(waiverSignedContent(1760000000, '{"a":1}')).toBe('1760000000.{"a":1}');
   });
 });

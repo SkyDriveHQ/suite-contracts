@@ -20,6 +20,14 @@
  * with no ID check. `confirmNow()` is the desk checking ID in person: it records a fresh check, makes the
  * waiver valid and announces `waiver.confirmed`.
  *
+ * - **One waiver that needs a medical clearance** (v0.6.0), checked in person but not yet cleared, so a
+ *   host sees that a confirmed waiver is still not usable; and the smart-waiver facts on one kiosk waiver
+ *   (initials, an emergency contact, a consent, the signing language), absent everywhere else.
+ *
+ * `confirmIdCheck()` is the adapter's real call (v0.6.0): it confirms a waiver awaiting confirmation, says
+ * "already-confirmed" when asked again, "superseded" for a corrected one, and refuses an unknown id or a
+ * check dated outside the window (ahead of now, before signing, or more than 72 hours ago).
+ *
  * `goUnreachable()` makes every call throw `SiblingUnreachableError('waiver')`, so a host's Rule 13
  * fallback can be tested against the same mock.
  */
@@ -29,6 +37,8 @@ import {
   type ISODateTime,
   type Unsubscribe,
   type WaiverIdCheck,
+  type WaiverIdCheckRequest,
+  type WaiverIdCheckResult,
   type WaiverEngineAdapter,
   type WaiverLookup,
   type WaiverSiteRef,
@@ -53,6 +63,7 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
   private waivers: WaiverSummary[] = [];
   private listeners = new Set<(event: WaiverWebhookEvent) => void>();
   private unreachable = false;
+  private connectionActive = true;
   private eventSeq = 0;
   /** Its own stream, so the ID checks do not shift any name or date drawn from 'waivers'. */
   private checks: Rng;
@@ -127,6 +138,20 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
     const corrected = base(1, {});
     this.waivers.push(base(1, { status: 'superseded', supersededBy: corrected.waiverId, version: 2 }));
     this.waivers.push(corrected);
+    // Added in v0.6.0, last, so every earlier waiver keeps its id and name for a seed.
+    // The smart-waiver facts (v0.6.0): initials, an emergency contact, a consent, the language signed in.
+    this.waivers.push(base(0, {
+      signature: { docHash: FAKE_HASH(1), typedName: 'Mock Signer', intentConfirmed: true, signedBy: 'participant', userAgent: null, initials: { risks: 'MS' } },
+      signingLanguage: 'en',
+      emergencyContact: { name: 'Mock Contact', phone: '+1 555 0100', relationship: null },
+      consents: { photoConsent: { given: true, withdrawnAt: null } },
+    }));
+    // Checked in person, but a YES to a health question still needs a doctor's clearance: not usable yet.
+    this.waivers.push(base(1, {
+      status: 'needs-clearance',
+      fields: { bodyWeightKg: 80, heartCondition: true },
+      clearance: { required: true, flaggedQuestions: ['heartCondition'], cleared: null },
+    }));
   }
 
   /** Staff checked ID in person a few minutes after signing. */
@@ -146,6 +171,15 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
 
   comeBack(): void {
     this.unreachable = false;
+  }
+
+  /** Test helper: the host's connection is switched off in SkyWaiver, so `confirmIdCheck` answers `invalid`, until `reconnect()`. */
+  disconnect(): void {
+    this.connectionActive = false;
+  }
+
+  reconnect(): void {
+    this.connectionActive = true;
   }
 
   private check(): void {
@@ -214,6 +248,34 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
     this.waivers[i] = w;
     this.emit({ siteId: w.siteId, at: idCheck.checkedAt, type: 'waiver.confirmed', waiver: w });
     return w;
+  }
+
+  /**
+   * A desk check made in the host (v0.6.0), as SkyWaiver answers it. The mock has one staff list, so any
+   * caller counts as staff; the real engine records the check against the signed-in staff member.
+   */
+  async confirmIdCheck(request: WaiverIdCheckRequest): Promise<WaiverIdCheckResult> {
+    this.check();
+    if (!this.connectionActive) return { result: 'refused', reason: 'invalid', message: 'This connection is switched off in SkyWaiver.' };
+    if ((request.idCheckedInPerson as boolean) !== true) return { result: 'refused', reason: 'invalid', message: 'Check their ID in person first.' };
+    if (request.attestedBy !== undefined && request.attestedBy.length > 100) return { result: 'refused', reason: 'invalid', message: 'The name of who checked is too long (100 characters at most).' };
+    const i = this.waivers.findIndex((w) => w.waiverId === request.waiverId);
+    const before = this.waivers[i];
+    if (!before) return { result: 'refused', reason: 'not-found', message: 'No such waiver at your sites.' };
+    if (before.supersededBy !== null) return { result: 'superseded', waiver: before };
+    if (before.idCheck) return { result: 'already-confirmed', waiver: before };
+    // With no time given, the mock's desk checks a minute after signing, so a seed reproduces a day exactly.
+    const atMs = request.checkedAt === undefined ? Date.parse(before.signedAt) + 60_000 : Date.parse(request.checkedAt);
+    if (request.checkedAt !== undefined && (Number.isNaN(atMs) || atMs < Date.parse(before.signedAt) || atMs > Date.now() || Date.now() - atMs > 72 * 3_600_000)) {
+      return { result: 'refused', reason: 'out-of-time', message: 'That ID check is outside the time allowed. Check their ID again.' };
+    }
+    const checkedAt = new Date(atMs).toISOString().replace('.000Z', 'Z');
+    const idCheck: WaiverIdCheck = { checkedBy: request.attestedBy ?? 'Mock desk staff', checkedAt, method: 'in-person' };
+    const status = before.status === 'awaiting-confirmation' ? 'valid' : before.status;
+    const w: WaiverSummary = { ...before, status, idCheck, version: before.version + 1, updatedAt: checkedAt };
+    this.waivers[i] = w;
+    this.emit({ siteId: w.siteId, at: checkedAt, type: 'waiver.confirmed', waiver: w });
+    return { result: 'confirmed', waiver: w };
   }
 
   private emit(event: Omit<Extract<WaiverWebhookEvent, { type: 'waiver.signed' | 'waiver.confirmed' }>, 'eventId'>): void {
