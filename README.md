@@ -49,7 +49,7 @@ import { mockInstructorRoster, MockScenario } from '@skydrive/suite-contracts/mo
 | Instructor roster | SkyPerson → DZGO | **Agreed and live.** DZGO's shipped code already depends on it |
 | Rig service records, including what each rig is made of (container, main, reserve, AAD; v0.3.0). The rig's `serial` is its container's (v0.4.0) | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020 |
 | Pilot reports | SkyPerson → DZGO | ⚠️ **PROPOSED.** DEC-079 |
-| Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
+| Packing queue / jobs, as two adapters: `PackingQueueReadAdapter` (queue, invoices, updates; DZGO → SkyPerson) and `PackingWriteAdapter` (report a job, raise a note; SkyPerson → DZGO), v0.7.0. Neither can reach or report sport-rig jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**; adapter shape answered (PAK-Q-001), sport-rig visibility still open (PAK-Q-003) |
 | Instructor work: day, manifest, jump totals, pay lines, availability, invoices | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Scoped to the signed-in instructor by construction |
 | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
 | Weather: readings, limit states, alert events (the webhook payload) | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Becomes agreed, and the package is retagged, in SkyWeather's integration-kit slice (W6) |

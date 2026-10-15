@@ -11,7 +11,7 @@
  * | Instructor roster | SkyPerson → DZGO | **Agreed and live.** DZGO's shipped code depends on it |
  * | Rig service records | Rigging App → DZGO | ⚠️ **PROPOSED.** TBD-020. Needs Kyle's sign-off |
  * | Pilot reports | SkyPerson → DZGO | ⚠️ **PROPOSED.** DEC-079. Needs Kyle's sign-off |
- * | Packing queue / jobs | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**, adapter surface open by name (PAK-Q-001) |
+ * | Packing queue / jobs (separate read and write adapters, v0.7.0) | SkyPerson ↔ DZGO | ⚠️ **PROPOSED**; adapter shape answered (PAK-Q-001), sport-rig visibility open (PAK-Q-003) |
  * | Instructor work (day, manifest, pay, availability, invoices) | DZGO ↔ SkyPerson | ⚠️ **PROPOSED** (Kyle, 2026-09-23). Mock-backed until DZGO serves it |
  * | Ops events | every product → Ops | ⚠️ **PROPOSED.** Direction settled, shape is new |
  * | Weather: readings, limit states, alert events | SkyWeather → any app | ⚠️ **PROPOSED** (DEC-164). Agreed and retagged in SkyWeather W6 |

@@ -323,6 +323,49 @@ describe('packing day', () => {
   });
 });
 
+describe('packing adapters', () => {
+  it('hands out objects with only the declared methods, so sport jobs are unreachable', () => {
+    const day = mockPackingDay(new MockScenario({ seed: 56, activityDate: DAY }));
+    expect(Object.keys(day.readAdapter()).sort()).toEqual(
+      ['descriptor', 'getInvoices', 'getQueue', 'source', 'subscribe'],
+    );
+    expect(Object.keys(day.writeAdapter()).sort()).toEqual(
+      ['descriptor', 'raiseNote', 'recordPackJob', 'source'],
+    );
+    expect(day.readAdapter()).not.toHaveProperty('getSportJobs');
+    expect(day.writeAdapter()).not.toHaveProperty('getSportJobs');
+  });
+
+  it('serves the queue and invoices through the read adapter and tells subscribers about a job', async () => {
+    const day = mockPackingDay(new MockScenario({ seed: 57, activityDate: DAY }), { lines: 6 });
+    const read = day.readAdapter();
+    const events: string[] = [];
+    const off = read.subscribe((e) => events.push(e.type));
+    const line = (await read.getQueue(DAY)).find((l) => l.short > 0)!;
+    await day.writeAdapter().recordPackJob('MOCK-RIG-001', line.kind);
+    expect(events).toEqual(['packing.queue_changed', 'packing.job_recorded']);
+    expect((await read.getInvoices()).length).toBeGreaterThan(0);
+    off();
+  });
+
+  it('raises a note through the write adapter', async () => {
+    const day = mockPackingDay(new MockScenario({ seed: 58, activityDate: DAY }));
+    const note = await day.writeAdapter().raiseNote('MOCK-RIG-002', 'Missing one rubber band.');
+    expect(note.scanCode).toBe('MOCK-RIG-002');
+    expect(await day.getNotes('MOCK-RIG-002')).toHaveLength(1);
+  });
+
+  it('never announces a sport job to subscribers, but keeps it for the packer', async () => {
+    const day = mockPackingDay(new MockScenario({ seed: 59, activityDate: DAY }), { completedJobs: 0 });
+    const events: string[] = [];
+    day.readAdapter().subscribe((e) => events.push(e.type));
+    const before = (await day.getSportJobs()).length;
+    await day.recordPackJob('MOCK-RIG-003', 'sport');
+    expect(events).toEqual([]);
+    expect((await day.getSportJobs()).length).toBe(before + 1);
+  });
+});
+
 describe('ops events', () => {
   it('carries no free text or person reference', () => {
     for (const e of mockOpsEventStream(new MockScenario({ seed: 61, activityDate: DAY }), { count: 60 })) {

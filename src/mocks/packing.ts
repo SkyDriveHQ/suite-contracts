@@ -2,12 +2,12 @@
  * Mock packing queue and pack jobs — the SkyPerson (packer) ↔ DZGO seam.
  *
  * **This generator is complete and the contract above it is not**, which is
- * deliberate. PAK-Q-001 asks whether the four packing operations belong on one
- * adapter or several, and that question has not been answered — so this file
- * fabricates every record type the boundary carries and exposes them through
- * plain methods. Whatever adapter surface gets declared in `../packing.ts`,
- * `MockPackingDay` already has the data and the behaviour to satisfy it; only
- * the `implements` clause is missing.
+ * deliberate. PAK-Q-001 is answered: the four packing operations are two
+ * interfaces, `PackingQueueReadAdapter` and `PackingWriteAdapter`. This file
+ * fabricates every record type the boundary carries and `MockPackingDay`
+ * implements both. Consumers that are DZGO-facing should be handed
+ * `readAdapter()` or `writeAdapter()`, which return objects holding only the
+ * declared methods, so `getSportJobs` is not on them even at runtime.
  *
  * **The queue is computed, not sampled.** `short` is derived from `needed`
  * minus what is packed, the way DZGO's own `QueueLine` derives it. A generator
@@ -23,6 +23,8 @@ import type {
   PackerInvoiceSummary,
   PackingEvent,
   PackingQueueLine,
+  PackingQueueReadAdapter,
+  PackingWriteAdapter,
   PackJobReport,
   RigKind,
   Unsubscribe,
@@ -58,10 +60,13 @@ export interface MockPackingDayOptions {
  * A fabricated packing day.
  *
  * Holds the queue, the jobs, the notes and the invoices, and exposes the four
- * operations PAK-R-002/003/004/005 describe. Deliberately implements no
- * interface yet — see the file header.
+ * operations PAK-R-002/003/004/005 describe.
+ *
+ * `getPackJobs`, `getNotes` and `getSportJobs` are mock and SkyPerson-internal
+ * conveniences, not part of either adapter. Do not pass the class itself to
+ * anything DZGO-facing: use `readAdapter()` / `writeAdapter()`.
  */
-export class MockPackingDay {
+export class MockPackingDay implements PackingQueueReadAdapter, PackingWriteAdapter {
   readonly source = 'mock' as const;
   readonly descriptor = {
     label: 'Mock packing queue (DZGO stand-in)',
@@ -183,7 +188,9 @@ export class MockPackingDay {
       this.queue[this.queue.indexOf(line)] = updated;
       this.emit({ type: 'packing.queue_changed', at: job.packedAt, line: updated });
     }
-    this.emit({ type: 'packing.job_recorded', at: job.packedAt, job });
+    // A sport job is the packer's own record (PAK-Q-003 is open), so it is
+    // kept but never announced to subscribers, who are DZGO-side.
+    if (kind !== 'sport') this.emit({ type: 'packing.job_recorded', at: job.packedAt, job });
     return job;
   }
 
@@ -246,6 +253,29 @@ export class MockPackingDay {
   subscribe(listener: (event: PackingEvent) => void): Unsubscribe {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  // ── The two adapters, as objects that hold only their declared methods ─────
+
+  /** DZGO to SkyPerson: queue, invoices, updates. Nothing that writes, nothing about sport jobs. */
+  readAdapter(): PackingQueueReadAdapter {
+    return {
+      source: this.source,
+      descriptor: this.descriptor,
+      getQueue: (day) => this.getQueue(day),
+      getInvoices: () => this.getInvoices(),
+      subscribe: (listener) => this.subscribe(listener),
+    };
+  }
+
+  /** SkyPerson to DZGO: report a job, raise a note. Cannot report a sport rig, cannot list jobs. */
+  writeAdapter(): PackingWriteAdapter {
+    return {
+      source: this.source,
+      descriptor: this.descriptor,
+      recordPackJob: (scanCode, kind) => this.recordPackJob(scanCode, kind),
+      raiseNote: (scanCode, text) => this.raiseNote(scanCode, text),
+    };
   }
 }
 
