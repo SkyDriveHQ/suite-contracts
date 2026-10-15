@@ -3,12 +3,11 @@
  *
  * ## ⚠️ PROPOSED, and the adapter surface is an open question by name.
  *
- * `SKYPERSON-MASTER.md` §15.3 tracks this as **PAK-Q-001**: *"Exact shape of
- * `PackingQueueAdapter` and whether pack-job push (PAK-R-003) and maintenance
- * sync (PAK-R-004) are the same adapter or separate ones."* That question has
- * not been answered, so this file defines the **records** that cross the
- * boundary — which the requirements do determine — and leaves the adapter
- * surface itself to be decided.
+ * `SKYPERSON-MASTER.md` §15.3 tracks the adapter shape as **PAK-Q-001**. It is
+ * answered (Rule zero, 2026-10-15): separate read and write adapters, declared
+ * at the bottom of this file as `PackingQueueReadAdapter` and
+ * `PackingWriteAdapter`. This file defines the **records** that cross the
+ * boundary and those two interfaces.
  *
  * ## Direction, which is settled
  *
@@ -149,7 +148,7 @@ export interface PackingEvent {
 
 /**
  * Identifies an implementation to the consuming product's UI and logs.
- * Whatever adapter shape PAK-Q-001 settles on carries one of these.
+ * Both packing adapters carry its `source` and `descriptor`.
  */
 export interface PackingAdapterIdentity {
   readonly source: SuiteSource;
@@ -157,24 +156,40 @@ export interface PackingAdapterIdentity {
   readonly unsubscribe?: Unsubscribe;
 }
 
-// TODO(human): define the adapter surface PAK-Q-001 asks about.
-//
-// Everything above is the data. What is missing is the interface (or
-// interfaces) through which it moves. Four operations exist, from the
-// requirements:
-//
-//   read  — the dropzone's queue for today          (PAK-R-002, DZGO → SkyPerson)
-//   write — report a completed pack job             (PAK-R-003, SkyPerson → DZGO)
-//   write — raise a maintenance note on a rig       (PAK-R-004, SkyPerson → DZGO)
-//   read  — the packer's invoices for a period      (PAK-R-005, DZGO → SkyPerson)
-//
-// PAK-Q-001 asks whether these belong on one adapter or several. Declare
-// whichever you decide below — one `PackingQueueAdapter`, or a read adapter
-// plus one or more write adapters. Use `PackingAdapterIdentity` for the
-// `source`/`descriptor` fields, and `subscribe(listener: (event: PackingEvent)
-// => void): Unsubscribe` for live updates, matching `InstructorRosterAdapter`
-// in `./instructor.ts`.
-//
-// The mock generator in `../mocks/packing.js` fabricates every record type
-// above already and will implement whatever you declare here.
+/**
+ * What the dropzone sends SkyPerson: the day's queue, the packer's invoices, and
+ * live updates. DZGO is the source of record (PAK-R-002, PAK-R-005), so every
+ * method here moves data from DZGO to SkyPerson.
+ *
+ * **Two interfaces, not one (PAK-Q-001, answered under Rule zero 2026-10-15:
+ * "separate read and write adapters").** Direction is structural. A thing that
+ * is handed only this interface cannot write, and a thing handed only
+ * `PackingWriteAdapter` cannot read the queue.
+ */
+export interface PackingQueueReadAdapter extends Pick<PackingAdapterIdentity, 'source' | 'descriptor'> {
+  /** The dropzone's queue for `day`, shortest-staffed line first. */
+  getQueue(day: ISODate): Promise<PackingQueueLine[]>;
+  /** The packer's invoices, which DZGO already produced (PAK-R-005). Dropzone work only. */
+  getInvoices(): Promise<PackerInvoiceSummary[]>;
+  /** Queue changes, recorded jobs, raised notes and issued invoices, as they happen. */
+  subscribe(listener: (event: PackingEvent) => void): Unsubscribe;
+}
 
+/**
+ * What SkyPerson sends the dropzone: a completed pack job (PAK-R-003) and a
+ * maintenance note (PAK-R-004).
+ *
+ * **There is no way to list jobs here, and no way to report a sport-rig job.**
+ * DZM-Q-042 keeps sport-rig work off DZGO entirely, and whether a dropzone may
+ * ever see it is PAK-Q-003, still Kyle's call. So `recordPackJob` takes a
+ * `FleetKind`, which excludes `sport`, and neither interface carries a sport-job
+ * list. A packer's own sport jobs live in SkyPerson and are not part of this
+ * boundary; reaching them is a SkyPerson-internal matter, not something an
+ * adapter handed to DZGO can do.
+ */
+export interface PackingWriteAdapter extends Pick<PackingAdapterIdentity, 'source' | 'descriptor'> {
+  /** Report a completed pack job on a dropzone-owned rig. */
+  recordPackJob(scanCode: string, kind: FleetKind): Promise<PackJobReport>;
+  /** Raise a maintenance note on a rig. Always also kept as a private note in SkyPerson. */
+  raiseNote(scanCode: string, text: string): Promise<MaintenanceNote>;
+}
