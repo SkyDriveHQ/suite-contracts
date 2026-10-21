@@ -218,6 +218,31 @@ export type VoucherBalance = SuiteProvenance & {
   updatedAt: ISODateTime;
 };
 
+/** A voucher read by its full code: the balance, plus when it stops being spendable. */
+export type VoucherByCode = VoucherBalance & {
+  /** When the voucher stops being spendable. Null when vouchers never expire, which is the case in SkyBook today. */
+  expiresAt: ISODateTime | null;
+};
+
+/** Spend from the voucher a code names, at the desk. */
+export interface RedeemVoucherRequest {
+  /** The full code as the customer gave it; spaces, dashes and case are ignored. */
+  code: string;
+  /** The typed amount times 100, a whole number above zero: 50.00 is 5000. */
+  amountMinor: number;
+  /** The `version` read from `lookupVoucherByCode`: the optimistic lock. A stale one is refused, not overwritten. */
+  expectedVersion: number;
+  /** One per redemption, the same on every retry: a retry writes nothing more and returns `replayed: true`. */
+  idempotencyKey: string;
+  note?: string;
+}
+
+export interface RedeemVoucherResult {
+  voucher: VoucherByCode;
+  /** True when this key had already redeemed this amount, so nothing new was written. */
+  replayed: boolean;
+}
+
 interface EventBase {
   eventId: string;
   siteId: string;
@@ -303,6 +328,18 @@ export interface BookingEngineAdapter {
   getDay(siteId: string, date: ISODate): Promise<BookingSummary[]>;
   getBooking(bookingId: string): Promise<BookingSummary | null>;
   getVoucher(siteId: string, voucherId: string): Promise<VoucherBalance | null>;
+  /**
+   * The voucher the full `code` names at `siteId`, or null when there is none. Null also covers a code that
+   * belongs to another site. Optional (v0.9.0): an adapter that cannot look up by code leaves it out.
+   */
+  lookupVoucherByCode?(siteId: string, code: string): Promise<VoucherByCode | null>;
+  /**
+   * Spend `request.amountMinor` from the voucher the code names: one ledger entry. A stale `expectedVersion`
+   * throws `BookingVersionConflictError` (its `bookingId` holds the voucher id); look up again and retry with
+   * a new key. Retrying with the same `idempotencyKey` and amount writes nothing and returns `replayed: true`.
+   * Optional (v0.9.0), like `lookupVoucherByCode`.
+   */
+  redeemVoucherByCode?(siteId: string, request: RedeemVoucherRequest): Promise<RedeemVoucherResult>;
 
   reschedule(bookingId: string, request: RescheduleRequest): Promise<BookingSummary>;
   updateStatus(bookingId: string, request: StatusRequest): Promise<BookingSummary>;

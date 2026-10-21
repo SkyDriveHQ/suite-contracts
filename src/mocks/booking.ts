@@ -38,7 +38,10 @@ import {
   type RescheduleRequest,
   type StatusRequest,
   type Unsubscribe,
+  type RedeemVoucherRequest,
+  type RedeemVoucherResult,
   type VoucherBalance,
+  type VoucherByCode,
 } from '../index.js';
 import { MockScenario } from './scenario.js';
 import { mockName, nowIso, shiftDays, type Rng } from './rng.js';
@@ -203,6 +206,7 @@ export class MockBookingEngine implements BookingEngineAdapter {
   private sites: BookingSiteRef[];
   private bookings: BookingSummary[];
   private vouchers: VoucherBalance[];
+  private redemptions = new Map<string, { amountMinor: number; voucherId: string }>();
   private listeners = new Set<(event: BookingWebhookEvent) => void>();
   private unreachable = false;
   private eventSeq = 0;
@@ -247,6 +251,55 @@ export class MockBookingEngine implements BookingEngineAdapter {
   async getVoucher(siteId: string, voucherId: string): Promise<VoucherBalance | null> {
     this.check();
     return this.vouchers.find((v) => v.siteId === siteId && v.voucherId === voucherId) ?? null;
+  }
+
+  /** The fictional code on site number `i`'s voucher; the real code never leaves SkyBook. */
+  static voucherCode(i: number): string {
+    return `MOCK-GIFT-000${i}`;
+  }
+
+  private voucherFor(siteId: string, code: string): number {
+    const norm = (c: string) => c.replace(/[\s-]/g, '').toUpperCase();
+    return this.vouchers.findIndex(
+      (v, i) => v.siteId === siteId && norm(MockBookingEngine.voucherCode(i)) === norm(code),
+    );
+  }
+
+  async lookupVoucherByCode(siteId: string, code: string): Promise<VoucherByCode | null> {
+    this.check();
+    const i = this.voucherFor(siteId, code);
+    return i < 0 ? null : { ...this.vouchers[i]!, expiresAt: null };
+  }
+
+  async redeemVoucherByCode(siteId: string, request: RedeemVoucherRequest): Promise<RedeemVoucherResult> {
+    this.check();
+    const i = this.voucherFor(siteId, request.code);
+    if (i < 0) throw new Error('no voucher with that code at this site');
+    const before = this.vouchers[i]!;
+    const prior = this.redemptions.get(request.idempotencyKey);
+    if (prior) {
+      if (prior.voucherId !== before.voucherId || prior.amountMinor !== request.amountMinor) {
+        throw new Error('idempotency key already used for a different redemption');
+      }
+      return { voucher: { ...before, expiresAt: null }, replayed: true };
+    }
+    if (before.version !== request.expectedVersion) {
+      throw new BookingVersionConflictError(before.voucherId, before.version);
+    }
+    if (before.status === 'void') throw new Error('voucher is void');
+    if (!Number.isInteger(request.amountMinor) || request.amountMinor <= 0) throw new Error('amount must be a whole number above zero');
+    if (request.amountMinor > before.balanceMinor) throw new Error('amount is more than the balance');
+    const balanceMinor = before.balanceMinor - request.amountMinor;
+    const after: VoucherBalance = {
+      ...before,
+      balanceMinor,
+      status: balanceMinor === 0 ? 'spent' : before.status,
+      version: before.version + 1,
+      updatedAt: nowIso(),
+    };
+    this.vouchers[i] = after;
+    this.redemptions.set(request.idempotencyKey, { amountMinor: request.amountMinor, voucherId: after.voucherId });
+    return { voucher: { ...after, expiresAt: null }, replayed: false };
   }
 
   async reschedule(bookingId: string, request: RescheduleRequest): Promise<BookingSummary> {
