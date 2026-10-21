@@ -234,3 +234,14 @@ describe('waiver boundary v0.6.0', () => {
     expect(waiverSignedContent(1760000000, '{"a":1}')).toBe('1760000000.{"a":1}');
   });
 });
+
+describe('waiver boundary v0.8.0', () => {
+  it('carries an optional evidence hash: a fictional one on the first site, absent on the second', async () => {
+    const e = engine();
+    const [first, second] = await e.listSites();
+    const a = await e.listChangedSince(first!.siteId, '2000-01-01T00:00:00Z');
+    const b = await e.listChangedSince(second!.siteId, '2000-01-01T00:00:00Z');
+    expect(a.some((w) => /^[0-9a-f]{64}$/.test(w.evidenceHash ?? ''))).toBe(true);
+    expect(b.every((w) => !('evidenceHash' in w))).toBe(true);
+  });
+});

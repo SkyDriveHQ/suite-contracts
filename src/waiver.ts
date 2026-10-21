@@ -241,6 +241,12 @@ export type WaiverSummary = SuiteProvenance & {
   consents?: Record<string, WaiverConsent>;
   /** Present only when a medical clearance is needed (v0.6.0). Absent: none is needed. */
   clearance?: WaiverClearance;
+  /**
+   * SHA-256 of the canonical evidence document for this waiver, as lowercase hex (64 characters), set by
+   * the producer when the waiver is written and never changed (v0.8.0). Optional: absent on a waiver that
+   * predates it or from a producer that cannot say; a host must not treat absence as a failed check.
+   */
+  evidenceHash?: string;
   /** Only ever increases. A mirror keeps the copy with the highest version (`isNewerThan` in booking.ts). */
   version: number;
   updatedAt: ISODateTime;
