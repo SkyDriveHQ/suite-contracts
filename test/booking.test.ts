@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { MockScenario, mockBookingEngine } from '../src/mocks/index.js';
+import { MockBookingEngine, MockScenario, mockBookingEngine } from '../src/mocks/index.js';
 import {
   BookingVersionConflictError,
   SiblingUnreachableError,
@@ -121,5 +121,57 @@ describe('booking boundary', () => {
     for (const site of await e.listSites()) {
       for (const b of await e.getDay(site.siteId, DAY)) expect(b.source).toBe('mock');
     }
+  });
+});
+
+describe('voucher by code (v0.9.0)', () => {
+  const siteOf = async (e: ReturnType<typeof engine>) => (await e.listSites())[0]!.siteId;
+  const code = MockBookingEngine.voucherCode(0);
+
+  it('finds a voucher by its code, ignoring case, spaces and dashes', async () => {
+    const e = engine();
+    const found = await e.lookupVoucherByCode(await siteOf(e), ` ${code.toLowerCase().replace(/-/g, ' ')} `);
+    expect(found).not.toBeNull();
+    expect(found!.expiresAt).toBeNull();
+    expect(found!.balanceMinor).toBe(12500);
+  });
+
+  it('returns null for an unknown code and for another site\'s code', async () => {
+    const e = engine();
+    const [a, b] = await e.listSites();
+    expect(await e.lookupVoucherByCode(a!.siteId, 'NOPE-0000')).toBeNull();
+    expect(await e.lookupVoucherByCode(b!.siteId, code)).toBeNull();
+  });
+
+  it('redeems and bumps the version and balance', async () => {
+    const e = engine();
+    const siteId = await siteOf(e);
+    const v = (await e.lookupVoucherByCode(siteId, code))!;
+    const r = await e.redeemVoucherByCode(siteId, { code, amountMinor: 5000, expectedVersion: v.version, idempotencyKey: 'k1' });
+    expect(r.replayed).toBe(false);
+    expect(r.voucher.balanceMinor).toBe(7500);
+    expect(r.voucher.version).toBe(v.version + 1);
+    expect((await e.lookupVoucherByCode(siteId, code))!.balanceMinor).toBe(7500);
+  });
+
+  it('answers a retry with the same key as replayed and writes nothing more', async () => {
+    const e = engine();
+    const siteId = await siteOf(e);
+    const v = (await e.lookupVoucherByCode(siteId, code))!;
+    const req = { code, amountMinor: 5000, expectedVersion: v.version, idempotencyKey: 'k2' };
+    await e.redeemVoucherByCode(siteId, req);
+    const again = await e.redeemVoucherByCode(siteId, req);
+    expect(again.replayed).toBe(true);
+    expect(again.voucher.balanceMinor).toBe(7500);
+  });
+
+  it('refuses a stale version with BookingVersionConflictError', async () => {
+    const e = engine();
+    const siteId = await siteOf(e);
+    const v = (await e.lookupVoucherByCode(siteId, code))!;
+    await e.redeemVoucherByCode(siteId, { code, amountMinor: 1000, expectedVersion: v.version, idempotencyKey: 'k3' });
+    await expect(
+      e.redeemVoucherByCode(siteId, { code, amountMinor: 1000, expectedVersion: v.version, idempotencyKey: 'k4' }),
+    ).rejects.toBeInstanceOf(BookingVersionConflictError);
   });
 });
