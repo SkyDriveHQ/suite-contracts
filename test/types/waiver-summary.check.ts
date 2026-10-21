@@ -55,3 +55,11 @@ export const never: WaiverIdCheck = { checkedBy: 'Desk staff', method: 'in-perso
 
 // @ts-expect-error the key is left out, or holds an object or null; never undefined.
 export const undefinedCheck: WaiverSummary = { ...beforeTheField, idCheck: undefined };
+
+// v0.8.0: `evidenceHash` is optional. The old shape above still compiles; a well-formed value compiles;
+// a wrong type, or `null`, is rejected.
+export const withEvidenceHash: WaiverSummary = { ...beforeTheField, evidenceHash: 'ab'.repeat(32) };
+// @ts-expect-error evidenceHash is a string, not a number
+export const hashWrongType: WaiverSummary = { ...beforeTheField, evidenceHash: 12345 };
+// @ts-expect-error absent means absent: it is never null
+export const hashNull: WaiverSummary = { ...beforeTheField, evidenceHash: null };

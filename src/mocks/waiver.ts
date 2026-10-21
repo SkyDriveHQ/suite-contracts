@@ -104,6 +104,8 @@ export class MockWaiverEngine implements WaiverEngineAdapter {
         signingSession: null,
         supersededBy: null,
         signature: { docHash: FAKE_HASH(siteIdx + 1), typedName: 'Mock Signer', intentConfirmed: true, signedBy: 'participant', userAgent: null },
+        // Fictional evidence fingerprint (v0.8.0) on the first site's waivers only; the second site's stay without it.
+        ...(siteIdx === 0 ? { evidenceHash: FAKE_HASH(0xe00 + n) } : {}),
         version: 1,
         updatedAt: at(8),
         ...over,
