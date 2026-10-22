@@ -12,7 +12,9 @@ import {
   BookingVersionConflictError,
   SiblingUnreachableError,
   isNewerThan,
+  isReinstatement,
   paymentProblems,
+  type BookingSummary,
   type BookingWebhookEvent,
 } from '../src/index.js';
 
@@ -173,5 +175,153 @@ describe('voucher by code (v0.9.0)', () => {
     await expect(
       e.redeemVoucherByCode(siteId, { code, amountMinor: 1000, expectedVersion: v.version, idempotencyKey: 'k4' }),
     ).rejects.toBeInstanceOf(BookingVersionConflictError);
+  });
+});
+
+describe('a scrubbed booking that is rebooked (v0.10.0)', () => {
+  /** Cancel a confirmed booking (the scrub), then rebook it, recording every event. */
+  async function scrubAndRebook() {
+    const e = engine();
+    const events: BookingWebhookEvent[] = [];
+    e.subscribe((ev) => events.push(ev));
+    const [site] = await e.listSites();
+    const b = (await e.getDay(site!.siteId, DAY)).find((x) => x.status === 'confirmed')!;
+    const cancelled = await e.scrubBooking(b.bookingId, { cause: 'weather', expectedVersion: b.version });
+    const back = await e.rebookScrubbed(b.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: cancelled.version });
+    return { e, events, b, back };
+  }
+
+  /** A host written before v0.10.0: keeps cancelled bookings, applies every booking it knows by version, ignores unknown types. */
+  function oldMirror(events: BookingWebhookEvent[]) {
+    const copy = new Map<string, BookingSummary>();
+    for (const ev of events) {
+      switch (ev.type) {
+        case 'booking.created':
+        case 'booking.updated':
+        case 'booking.cancelled':
+        case 'booking.rescheduled':
+        case 'booking.attendance':
+          if (isNewerThan(ev.booking, copy.get(ev.booking.bookingId))) copy.set(ev.booking.bookingId, ev.booking);
+          break;
+        default:
+          break;
+      }
+    }
+    return copy;
+  }
+
+  it('emits booking.reinstated with the confirmed booking and where it was before', async () => {
+    const { events, b, back } = await scrubAndRebook();
+    const ev = events.find((x) => x.type === 'booking.reinstated');
+    expect(ev).toBeDefined();
+    if (ev?.type !== 'booking.reinstated') return;
+    expect(ev.booking.status).toBe('confirmed');
+    expect(ev.booking.version).toBe(back.version);
+    expect(ev.change.action).toBe('moved');
+    expect(ev.change.fromSlotStart).toBe(b.slotStart);
+  });
+
+  it('still sends booking.rescheduled, at the same version, so an old host sees what it saw before', async () => {
+    const { events, back } = await scrubAndRebook();
+    expect(events.map((x) => x.type)).toEqual(['booking.cancelled', 'booking.reinstated', 'booking.rescheduled']);
+    const moved = events.find((x) => x.type === 'booking.rescheduled');
+    expect(moved?.type === 'booking.rescheduled' && moved.booking.version).toBe(back.version);
+  });
+
+  it('leaves a host that ignores unknown types with the booking confirmed again', async () => {
+    const { events, b } = await scrubAndRebook();
+    expect(oldMirror(events).get(b.bookingId)?.status).toBe('confirmed');
+  });
+
+  it('lets a host that deletes on cancel store the booking again, and makes the second event a replay', async () => {
+    const { events, b } = await scrubAndRebook();
+    const copy = new Map<string, BookingSummary>();
+    let restored = 0;
+    for (const ev of events) {
+      if (!('booking' in ev)) continue;
+      const id = ev.booking.bookingId;
+      if (ev.type === 'booking.cancelled') {
+        copy.delete(id);
+        continue;
+      }
+      if (isReinstatement(ev, copy.get(id))) restored += 1;
+      if (isNewerThan(ev.booking, copy.get(id))) copy.set(id, ev.booking);
+    }
+    expect(copy.get(b.bookingId)?.status).toBe('confirmed');
+    expect(restored).toBe(1);
+  });
+
+  it('stores the booking once when booking.rescheduled arrives before booking.reinstated, and names no reinstatement', async () => {
+    const { events, b } = await scrubAndRebook();
+    const reinstated = events.find((x) => x.type === 'booking.reinstated')!;
+    const moved = events.find((x) => x.type === 'booking.rescheduled')!;
+    const swapped = events.filter((x) => x !== reinstated && x !== moved).concat([moved, reinstated]);
+    const copy = new Map<string, BookingSummary>();
+    let restored = 0;
+    let stored = 0;
+    for (const ev of swapped) {
+      if (!('booking' in ev)) continue;
+      const id = ev.booking.bookingId;
+      if (ev.type === 'booking.cancelled') {
+        copy.delete(id);
+        continue;
+      }
+      if (isReinstatement(ev, copy.get(id))) restored += 1;
+      if (isNewerThan(ev.booking, copy.get(id))) {
+        copy.set(id, ev.booking);
+        stored += 1;
+      }
+    }
+    expect(copy.get(b.bookingId)?.status).toBe('confirmed');
+    expect(stored).toBe(1);
+    // The host holds nothing when booking.rescheduled lands, so it is not named a reinstatement, and
+    // booking.reinstated is then a replay. Not a trigger to rely on for a customer notice.
+    expect(restored).toBe(0);
+  });
+
+  it('names a rescheduled event that brings back a booking held as cancelled as a reinstatement', async () => {
+    const { events } = await scrubAndRebook();
+    const cancelled = events.find((x) => x.type === 'booking.cancelled')!;
+    const moved = events.find((x) => x.type === 'booking.rescheduled')!;
+    if (!('booking' in cancelled) || !('booking' in moved)) throw new Error('booking events carry the booking');
+    expect(isReinstatement(moved, cancelled.booking)).toBe(true);
+    // Already applied (same version), or a plain move of a confirmed booking: not a reinstatement.
+    expect(isReinstatement(moved, moved.booking)).toBe(false);
+    expect(isReinstatement(moved, { ...cancelled.booking, status: 'confirmed' })).toBe(false);
+    expect(isReinstatement(cancelled, null)).toBe(false);
+  });
+
+  it('refuses to rebook a booking cancelled without a scrub, and to rebook a scrub twice', async () => {
+    const e = engine();
+    const [site] = await e.listSites();
+    const [a, c] = (await e.getDay(site!.siteId, DAY)).filter((x) => x.status === 'confirmed');
+    const plain = await e.updateStatus(a!.bookingId, { status: 'cancelled', initiator: 'operator', cause: 'weather', expectedVersion: a!.version });
+    await expect(
+      e.rebookScrubbed(a!.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: plain.version }),
+    ).rejects.toThrow(/cancelled, not scrubbed/);
+    expect((await e.getBooking(a!.bookingId))!.status).toBe('cancelled');
+    // The fixture's own cancelled booking was never scrubbed either.
+    const fixture = (await e.getDay(site!.siteId, DAY)).find((x) => x.status === 'cancelled' && x.bookingId !== a!.bookingId)!;
+    await expect(
+      e.rebookScrubbed(fixture.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: fixture.version }),
+    ).rejects.toThrow(/cancelled, not scrubbed/);
+    // A scrub is settled by its rebook: cancelled again, it cannot be rebooked a second time.
+    const scrubbed = await e.scrubBooking(c!.bookingId, { cause: 'weather', expectedVersion: c!.version });
+    const back = await e.rebookScrubbed(c!.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: scrubbed.version });
+    const again = await e.updateStatus(c!.bookingId, { status: 'cancelled', initiator: 'customer', cause: 'customer-request', expectedVersion: back.version });
+    await expect(
+      e.rebookScrubbed(c!.bookingId, { toSlotStart: `${DAY}T18:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: again.version }),
+    ).rejects.toThrow(/already settled/);
+  });
+
+  it('refuses to move a cancelled booking, and to rebook one that was not cancelled', async () => {
+    const e = engine();
+    const [site] = await e.listSites();
+    const day = await e.getDay(site!.siteId, DAY);
+    const gone = day.find((x) => x.status === 'cancelled')!;
+    const live = day.find((x) => x.status === 'confirmed')!;
+    await expect(e.reschedule(gone.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: gone.version })).rejects.toThrow(/cancelled/);
+    await expect(e.rebookScrubbed(live.bookingId, { toSlotStart: `${DAY}T17:00:00`, initiator: 'operator', cause: 'weather', expectedVersion: live.version })).rejects.toThrow(/not scrubbed/);
+    expect((await e.getBooking(gone.bookingId))!.version).toBe(gone.version);
   });
 });
