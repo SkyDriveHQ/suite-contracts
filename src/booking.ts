@@ -252,12 +252,42 @@ interface EventBase {
 /**
  * Everything SkyBook tells a host, by webhook (HMAC-signed) or realtime.
  * The same union, so a host handles both with one function.
+ *
+ * ## Every booking event carries the whole booking
+ *
+ * The type says what happened; `booking.status` says what the booking is now.
+ * A mirror applies `booking` from any `booking.*` event when `isNewerThan` says
+ * so, whatever the type. That is how a host that keeps cancelled bookings (as
+ * DZGO does) gets every case below right with no special handling.
+ *
+ * ## A cancelled booking that comes back: `booking.reinstated` (v0.10.0)
+ *
+ * A scrubbed (cancelled) booking that is rebooked onto a new departure is
+ * confirmed again. SkyBook then sends `booking.reinstated`, with the booking
+ * (`status: 'confirmed'`) and the change that moved it (`action: 'moved'`,
+ * `fromSlotStart` set), **in addition to** the events the same change already
+ * sent before v0.10.0 (`booking.rescheduled`, and `booking.updated` when the
+ * payment summary is rewritten). Never instead of them, so a host that ignores
+ * unknown types, or subscribed to a fixed list of types, keeps receiving what
+ * it received before.
+ *
+ * - A host that **deletes** a booking on `booking.cancelled` must handle
+ *   `booking.reinstated` by storing the booking again, or the customer is
+ *   missing from its day.
+ * - `booking.reinstated` and `booking.rescheduled` carry the booking at the
+ *   same `version` and may arrive in either order. A mirror applies the first
+ *   and `isNewerThan` makes the second a harmless replay.
+ * - A `booking.rescheduled` whose `booking.status` is `confirmed` for a booking
+ *   the host holds as cancelled is the same reinstatement, seen by a host that
+ *   does not read `booking.reinstated`. `isReinstatement` names it.
  */
 export type BookingWebhookEvent =
   | (EventBase & { type: 'booking.created'; booking: BookingSummary })
   | (EventBase & { type: 'booking.updated'; booking: BookingSummary })
   | (EventBase & { type: 'booking.cancelled'; booking: BookingSummary; change: BookingChangeEvent })
   | (EventBase & { type: 'booking.rescheduled'; booking: BookingSummary; change: BookingChangeEvent })
+  /** A cancelled booking confirmed again (a scrubbed booking rebooked). Sent besides `booking.rescheduled`, never instead (v0.10.0). */
+  | (EventBase & { type: 'booking.reinstated'; booking: BookingSummary; change: BookingChangeEvent })
   | (EventBase & { type: 'booking.attendance'; booking: BookingSummary })
   | (EventBase & { type: 'voucher.issued'; voucher: VoucherBalance })
   | (EventBase & { type: 'voucher.redeemed'; voucher: VoucherBalance; bookingId: string; amountMinor: number })
@@ -359,6 +389,23 @@ export function isNewerThan(
   existing: { version: number } | null | undefined,
 ): boolean {
   return !existing || incoming.version > existing.version;
+}
+
+/**
+ * True when `event` brings back a booking the host holds as cancelled, or does
+ * not hold at all: a `booking.reinstated`, or any newer booking event whose
+ * booking is no longer cancelled while the host's copy is. A host that deletes
+ * on `booking.cancelled` passes `null` as `existing` and still gets true for a
+ * `booking.reinstated`. Pure; never decides by the event type alone.
+ */
+export function isReinstatement(
+  event: BookingWebhookEvent,
+  existing: Pick<BookingSummary, 'status' | 'version'> | null | undefined,
+): boolean {
+  if (!('booking' in event)) return false;
+  if (!isNewerThan(event.booking, existing) || event.booking.status === 'cancelled') return false;
+  if (event.type === 'booking.reinstated') return true;
+  return existing?.status === 'cancelled';
 }
 
 /**
