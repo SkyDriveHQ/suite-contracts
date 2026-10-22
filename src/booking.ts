@@ -280,6 +280,12 @@ interface EventBase {
  * - A `booking.rescheduled` whose `booking.status` is `confirmed` for a booking
  *   the host holds as cancelled is the same reinstatement, seen by a host that
  *   does not read `booking.reinstated`. `isReinstatement` names it.
+ * - Order matters to `isReinstatement`, not to the mirror. At a host that
+ *   deletes on cancel, a `booking.rescheduled` that arrives before
+ *   `booking.reinstated` finds no copy, so it is not named a reinstatement, and
+ *   `booking.reinstated` is then a replay: the booking ends confirmed and
+ *   stored once, but nothing was named. Do not make `isReinstatement` the only
+ *   trigger for a customer notice.
  */
 export type BookingWebhookEvent =
   | (EventBase & { type: 'booking.created'; booking: BookingSummary })
@@ -397,6 +403,13 @@ export function isNewerThan(
  * booking is no longer cancelled while the host's copy is. A host that deletes
  * on `booking.cancelled` passes `null` as `existing` and still gets true for a
  * `booking.reinstated`. Pure; never decides by the event type alone.
+ *
+ * Depends on order. At a host that deletes on cancel, a `booking.rescheduled`
+ * arriving before `booking.reinstated` returns false (there is no cancelled
+ * copy to compare with), and the `booking.reinstated` after it returns false
+ * too (same version, a replay). The booking still ends confirmed and stored
+ * once; only the naming is missed. So it must not be a host's only trigger for
+ * a customer notice.
  */
 export function isReinstatement(
   event: BookingWebhookEvent,

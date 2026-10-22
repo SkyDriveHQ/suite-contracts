@@ -18,9 +18,11 @@
  *   paid by voucher, so the payment arithmetic is always on screen.
  * - **A partially redeemed voucher**, because partial redemption is where every
  *   competitor's voucher breaks.
- * - **A scrubbed booking can be rebooked** (`rebookScrubbed`, mock only), so a
- *   host can test that a cancelled booking that comes back is shown again,
- *   whether it reads `booking.reinstated` or only `booking.rescheduled`.
+ * - **A scrubbed booking can be rebooked** (`scrubBooking`, then
+ *   `rebookScrubbed`, both mock only), so a host can test that a cancelled
+ *   booking that comes back is shown again, whether it reads
+ *   `booking.reinstated` or only `booking.rescheduled`. Only a scrubbed
+ *   booking comes back, once, as in SkyBook.
  *
  * `goUnreachable()` makes every call throw `SiblingUnreachableError('booking')`,
  * so a host's Rule 13 fallback can be tested against the same mock.
@@ -210,6 +212,8 @@ export class MockBookingEngine implements BookingEngineAdapter {
   private bookings: BookingSummary[];
   private vouchers: VoucherBalance[];
   private redemptions = new Map<string, { amountMinor: number; voucherId: string }>();
+  /** Bookings cancelled by `scrubBooking`: `open` until rebooked, then `rebooked` (SkyBook's scrub resolution). */
+  private scrubs = new Map<string, 'open' | 'rebooked'>();
   private listeners = new Set<(event: BookingWebhookEvent) => void>();
   private unreachable = false;
   private eventSeq = 0;
@@ -321,17 +325,44 @@ export class MockBookingEngine implements BookingEngineAdapter {
   }
 
   /**
+   * Mock only, standing in for SkyBook's scrub of one booking: cancels it as
+   * the operator, fee waived, and records the scrub, which is what lets
+   * `rebookScrubbed` bring it back. A booking cancelled any other way
+   * (`updateStatus`) has no scrub, as in SkyBook. Emits `booking.cancelled`.
+   */
+  async scrubBooking(bookingId: string, request: { cause: string; expectedVersion: number }): Promise<BookingSummary> {
+    const { after } = this.write(bookingId, request.expectedVersion, (b) => {
+      if (b.status !== 'confirmed') throw new Error(`booking ${bookingId} is ${b.status} and cannot be scrubbed`);
+      return { ...b, status: 'cancelled' };
+    });
+    this.scrubs.set(bookingId, 'open');
+    this.emit({
+      type: 'booking.cancelled',
+      siteId: after.siteId,
+      booking: after,
+      change: this.change(after, 'cancelled', 'operator', request.cause, null),
+    });
+    return after;
+  }
+
+  /**
    * Mock only, standing in for SkyBook's rebook of a scrubbed booking (its
-   * `rebook_scrubbed_booking`, which no adapter method reaches): a cancelled
-   * booking is confirmed again on a new slot in one write. Emits
+   * `rebook_scrubbed_booking`, which no adapter method reaches): a booking
+   * cancelled by `scrubBooking` is confirmed again on a new slot in one write.
+   * As in SkyBook, a booking cancelled without a scrub is refused, and a scrub
+   * is settled by its rebook, so it cannot be rebooked twice. Emits
    * `booking.reinstated` and then `booking.rescheduled`, the event this change
    * sent before v0.10.0, both with the same booking at the same version.
    */
   async rebookScrubbed(bookingId: string, request: RescheduleRequest): Promise<BookingSummary> {
     const { before, after } = this.write(bookingId, request.expectedVersion, (b) => {
       if (b.status !== 'cancelled') throw new Error(`booking ${bookingId} is ${b.status}, not scrubbed`);
+      const scrub = this.scrubs.get(bookingId);
+      if (!scrub) throw new Error(`booking ${bookingId} was cancelled, not scrubbed`);
+      if (scrub !== 'open') throw new Error(`booking ${bookingId}'s scrub was already settled (${scrub})`);
       return { ...b, status: 'confirmed', slotStart: request.toSlotStart, activityDate: request.toSlotStart.slice(0, 10) };
     });
+    this.scrubs.set(bookingId, 'rebooked');
     const change = this.change(after, 'moved', request.initiator, request.cause, before.slotStart);
     this.emit({ type: 'booking.reinstated', siteId: after.siteId, booking: after, change });
     this.emit({ type: 'booking.rescheduled', siteId: after.siteId, booking: after, change });
