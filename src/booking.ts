@@ -296,10 +296,12 @@ export type BookingWebhookEvent =
   | (EventBase & { type: 'booking.reinstated'; booking: BookingSummary; change: BookingChangeEvent })
   | (EventBase & { type: 'booking.attendance'; booking: BookingSummary })
   | (EventBase & { type: 'voucher.issued'; voucher: VoucherBalance })
-  | (EventBase & { type: 'voucher.redeemed'; voucher: VoucherBalance; bookingId: string; amountMinor: number })
+  /** `bookingId` is `null` for a desk redemption by code, with no booking behind it (v0.11.0). */
+  | (EventBase & { type: 'voucher.redeemed'; voucher: VoucherBalance; bookingId: string | null; amountMinor: number })
   | (EventBase & {
       type: 'payment.captured' | 'payment.refunded';
-      bookingId: string;
+      /** `null` for a payment taken with no booking (v0.11.0). */
+      bookingId: string | null;
       kind: 'deposit' | 'balance' | 'policy-charge' | 'refund';
       amountMinor: number;
       currency: string;
