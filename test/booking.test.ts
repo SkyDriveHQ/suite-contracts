@@ -325,3 +325,15 @@ describe('a scrubbed booking that is rebooked (v0.10.0)', () => {
     expect((await e.getBooking(gone.bookingId))!.version).toBe(gone.version);
   });
 });
+
+describe('bookingId on voucher and payment events (v0.11.0)', () => {
+  it('may be null on voucher.redeemed, payment.captured and payment.refunded', () => {
+    const base = { eventId: 'e', occurredAt: '2026-11-01T10:00:00', dropzoneId: 'dz' } as never;
+    const evs: BookingWebhookEvent[] = [
+      { ...(base as object), type: 'voucher.redeemed', voucher: {} as never, bookingId: null, amountMinor: 100 } as BookingWebhookEvent,
+      { ...(base as object), type: 'payment.captured', bookingId: null, kind: 'balance', amountMinor: 100, currency: 'USD' } as BookingWebhookEvent,
+      { ...(base as object), type: 'payment.refunded', bookingId: null, kind: 'refund', amountMinor: 100, currency: 'USD' } as BookingWebhookEvent,
+    ];
+    expect(evs).toHaveLength(3);
+  });
+});
